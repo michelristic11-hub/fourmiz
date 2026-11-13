@@ -1,0 +1,14 @@
+{
+  "name": "fourmiz-functions",
+  "description": "Serveur du jeu Fourmiz (Firebase Cloud Functions)",
+  "private": true,
+  "main": "index.js",
+  "engines": { "node": "22" },
+  "dependencies": {
+    "firebase-admin": "^12.7.0",
+    "firebase-functions": "^6.1.0",
+    "h3-js": "4.1.0",
+    "topojson-client": "3.1.0",
+    "world-atlas": "2.0.2"
+  }
+}

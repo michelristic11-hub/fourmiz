@@ -1,0 +1,71 @@
+/**
+ * Fourmiz — serveur (Firebase Cloud Functions, 2e génération).
+ *
+ *  - tick  : toutes les minutes, fait avancer le monde (production, combats, IA, saisons).
+ *  - order : à chaque ordre envoyé par un joueur, le valide et l'applique.
+ *
+ * Tout l'état du monde est dans la Realtime Database, sous games/<gameId>/state.
+ * Les deux fonctions le modifient par transaction, donc jamais en même temps.
+ */
+'use strict';
+const { onSchedule } = require('firebase-functions/v2/scheduler');
+const { onValueCreated } = require('firebase-functions/v2/database');
+const { setGlobalOptions, logger } = require('firebase-functions/v2');
+const admin = require('firebase-admin');
+const h3 = require('h3-js');
+const topojson = require('topojson-client');
+const land = require('world-atlas/land-110m.json');
+const CONFIG = require('./shared/config.js');
+const WORLD = require('./shared/world.js');
+const ENGINE = require('./engine.js');
+
+/** Doit être la région de ta Realtime Database (us-central1 par défaut). */
+const REGION = 'us-central1';
+
+setGlobalOptions({ region: REGION, memory: '512MiB', maxInstances: 3 });
+admin.initializeApp();
+
+let world = null;
+/** Le monde (grille H3 + biomes) est construit une fois par instance, au démarrage. */
+function getWorld() {
+  if (!world) world = WORLD.buildWorld(h3, topojson.feature(land, land.objects.land), CONFIG);
+  return world;
+}
+
+const statePath = (gameId) => `games/${gameId}/state`;
+
+exports.tick = onSchedule({ schedule: 'every 1 minutes', timeoutSeconds: 60, maxInstances: 1 }, async () => {
+  const w = getWorld();
+  const now = Date.now();
+  const res = await admin.database().ref(statePath(CONFIG.online.gameId)).transaction((cur) => ENGINE.runTick(cur, w, CONFIG, now));
+  const s = res.snapshot.val();
+  if (s) logger.info(`Ère ${s.era} · tick ${s.tick} · ${s.colonies ? Object.keys(s.colonies).length : 0} colonies`);
+});
+
+exports.order = onValueCreated({ ref: '/games/{gameId}/orders/{orderId}' }, async (event) => {
+  const order = event.data.val();
+  const { gameId, orderId } = event.params;
+  const db = admin.database();
+  await event.data.ref.remove();
+  if (gameId !== CONFIG.online.gameId || !order || !order.uid) return;
+
+  const w = getWorld();
+  let result = { ok: false, reason: 'Ordre non traité.' };
+  await db.ref(statePath(gameId)).transaction((cur) => {
+    // Premier passage : le cache local est vide, Firebase rappelle avec la vraie valeur.
+    if (cur === null) {
+      result = { ok: false, reason: 'Le monde est en cours de création, réessaie dans une minute.' };
+      return null;
+    }
+    const out = ENGINE.runOrder(cur, w, CONFIG, order);
+    result = out.result;
+    return out.result.ok ? out.state : undefined; // undefined = ordre refusé, rien n'est écrit
+  });
+  await db.ref(`games/${gameId}/results/${order.uid}`).set({
+    orderId,
+    type: String(order.type || ''),
+    ok: result.ok,
+    reason: result.reason || null,
+    at: admin.database.ServerValue.TIMESTAMP,
+  });
+});
