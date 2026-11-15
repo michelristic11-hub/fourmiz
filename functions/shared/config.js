@@ -2,10 +2,16 @@
  * Fourmiz — valeurs de gameplay (data-driven).
  * Toutes les règles numériques du jeu sont ici : modifier ce fichier pour équilibrer,
  * sans toucher au code de la simulation.
- * Unité de temps : le « tick ». En prototype, 1 tick = 1 seconde réelle à vitesse x1.
+ * Unité de temps : le « tick », un petit pas de temps réel (voir time.tickSeconds).
+ * Il n'y a pas de tours : le monde avance en continu, un tick toutes les quelques secondes.
  */
 (function (root) {
   const CONFIG = {
+    time: {
+      /** Durée réelle d'un tick, en ligne comme en solo (vitesse x1). */
+      tickSeconds: 2,
+    },
+
     /** Résolution H3 des territoires (3 ≈ 12 000 cases de terre ferme, ~12 000 km² chacune). */
     h3Resolution: 3,
     /** On ignore l'Antarctique (latitude du centre de la case en dessous de cette valeur). */
@@ -59,11 +65,19 @@
     movement: {
       /** Durée de base d'un déplacement vers une case voisine (ticks), multipliée par le terrain d'arrivée. */
       baseTravelTicks: 4,
+      /** Dans ses propres galeries, les fourmiz vont plus vite (multiplicateur de durée). */
+      tunnelFactor: 0.5,
+      /** Longueur maximale d'un trajet (en cases). */
+      maxPathLength: 80,
+      /** « Rassembler ici » : fourmiz laissées sur chaque case pour qu'elle continue de récolter. */
+      rallyKeep: 1,
+      /** « Rassembler ici » : nombre maximal de cases qui envoient leurs fourmiz. */
+      rallyMaxSources: 200,
     },
 
     seasons: {
-      /** Durée d'une saison en ticks. Une année = 4 saisons. */
-      lengthTicks: 120,
+      /** Durée d'une saison en ticks (300 ticks de 2 s = 10 minutes). Une année = 4 saisons. */
+      lengthTicks: 300,
       names: ['Printemps', 'Été', 'Automne', 'Hiver'],
       /** Multiplicateur de récolte par saison (hors tropiques). */
       foodFactor: [1.0, 1.25, 0.85, 0.35],
@@ -90,13 +104,12 @@
     /** Partie en ligne (Firebase). */
     online: {
       gameId: 'monde',
-      /** Le serveur fait avancer le monde toutes les minutes, de N ticks. */
-      ticksPerRun: 1,
-      tickSeconds: 60,
+      /** Si le serveur a pris du retard, il rattrape au plus N ticks d'un coup (le reste du temps est sauté). */
+      maxCatchUpTicks: 900,
       /** Colonies IA présentes dans chaque nouveau monde en ligne. */
       aiCount: 4,
-      /** Après une victoire, le monde redémarre au bout de N ticks. */
-      resetAfterTicks: 60,
+      /** Après une victoire, un nouveau monde naît au bout de N minutes. */
+      resetAfterMinutes: 60,
       maxNameLength: 24,
     },
 
@@ -112,15 +125,15 @@
      * garnison d'insectes sauvages [min, max] sur les cases neutres.
      */
     biomes: {
-      jungle:   { name: 'Jungle',          color: '#1f7a3a', food: 1.6, defense: 1.2, travel: 1.3, wild: [6, 14] },
-      forest:   { name: 'Forêt tempérée',  color: '#4d9a4a', food: 1.3, defense: 1.1, travel: 1.1, wild: [4, 10] },
-      savanna:  { name: 'Savane',          color: '#c9b458', food: 1.1, defense: 1.0, travel: 1.0, wild: [3, 8] },
-      grass:    { name: 'Prairie',         color: '#9fc46a', food: 1.0, defense: 1.0, travel: 0.8, wild: [2, 6] },
-      desert:   { name: 'Désert',          color: '#e3c58c', food: 0.3, defense: 0.9, travel: 1.6, wild: [0, 3] },
-      mountain: { name: 'Montagne',        color: '#8a7f73', food: 0.5, defense: 1.6, travel: 1.8, wild: [2, 6] },
-      taiga:    { name: 'Taïga',           color: '#3d6b5a', food: 0.7, defense: 1.1, travel: 1.3, wild: [2, 6] },
-      tundra:   { name: 'Toundra',         color: '#a9b8b0', food: 0.35, defense: 1.0, travel: 1.4, wild: [0, 3] },
-      ice:      { name: 'Glace',           color: '#e8f1f5', food: 0.05, defense: 1.0, travel: 2.0, wild: [0, 1] },
+      jungle:   { name: 'Jungle',          color: '#138a3e', food: 1.6, defense: 1.2, travel: 1.3, wild: [6, 14] },
+      forest:   { name: 'Forêt tempérée',  color: '#4caf50', food: 1.3, defense: 1.1, travel: 1.1, wild: [4, 10] },
+      savanna:  { name: 'Savane',          color: '#e5b842', food: 1.1, defense: 1.0, travel: 1.0, wild: [3, 8] },
+      grass:    { name: 'Prairie',         color: '#a5d65a', food: 1.0, defense: 1.0, travel: 0.8, wild: [2, 6] },
+      desert:   { name: 'Désert',          color: '#f0cf8a', food: 0.3, defense: 0.9, travel: 1.6, wild: [0, 3] },
+      mountain: { name: 'Montagne',        color: '#9c7b63', food: 0.5, defense: 1.6, travel: 1.8, wild: [2, 6] },
+      taiga:    { name: 'Taïga',           color: '#2f7f68', food: 0.7, defense: 1.1, travel: 1.3, wild: [2, 6] },
+      tundra:   { name: 'Toundra',         color: '#a8c3cf', food: 0.35, defense: 1.0, travel: 1.4, wild: [0, 3] },
+      ice:      { name: 'Glace',           color: '#eef7fb', food: 0.05, defense: 1.0, travel: 2.0, wild: [0, 1] },
     },
   };
 

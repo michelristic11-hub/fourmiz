@@ -1,8 +1,10 @@
 /**
  * Fourmiz — serveur (Firebase Cloud Functions, 2e génération).
  *
- *  - tick  : toutes les minutes, fait avancer le monde (production, combats, IA, saisons).
- *  - order : à chaque ordre envoyé par un joueur, le valide et l'applique.
+ *  - tick  : toutes les minutes, rattrape le temps écoulé (production, combats, IA, saisons).
+ *  - order : à chaque ordre envoyé par un joueur, rattrape le temps puis valide et applique l'ordre.
+ *
+ * Le monde avance en continu (un tick toutes les 2 s) : il n'y a pas de tours.
  *
  * Tout l'état du monde est dans la Realtime Database, sous games/<gameId>/state.
  * Les deux fonctions le modifient par transaction, donc jamais en même temps.
@@ -50,6 +52,7 @@ exports.order = onValueCreated({ ref: '/games/{gameId}/orders/{orderId}' }, asyn
   if (gameId !== CONFIG.online.gameId || !order || !order.uid) return;
 
   const w = getWorld();
+  const now = Date.now();
   let result = { ok: false, reason: 'Ordre non traité.' };
   await db.ref(statePath(gameId)).transaction((cur) => {
     // Premier passage : le cache local est vide, Firebase rappelle avec la vraie valeur.
@@ -57,7 +60,7 @@ exports.order = onValueCreated({ ref: '/games/{gameId}/orders/{orderId}' }, asyn
       result = { ok: false, reason: 'Le monde est en cours de création, réessaie dans une minute.' };
       return null;
     }
-    const out = ENGINE.runOrder(cur, w, CONFIG, order);
+    const out = ENGINE.runOrder(cur, w, CONFIG, order, now);
     result = out.result;
     return out.result.ok ? out.state : undefined; // undefined = ordre refusé, rien n'est écrit
   });

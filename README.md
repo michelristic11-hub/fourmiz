@@ -3,7 +3,7 @@
 Jeu de conquête du monde avec des colonies de fourmiz. La carte du monde est découpée en environ 10 800 cases hexagonales (grille H3) sur la terre ferme. Pars d'un nid, nourris ta colonie et répands-toi sur toute la planète.
 
 Deux modes :
-- **En ligne** : un monde partagé et persistant, qui avance d'un tour par minute, 24 h/24, sur un serveur Firebase. On se connecte avec son compte Google.
+- **En ligne** : un monde partagé et persistant qui avance en continu, 24 h/24, sur un serveur Firebase. Il n'y a pas de tours. On se connecte avec son compte Google.
 - **Solo** (`index.html?solo`) : contre 5 colonies IA, tout tourne dans le navigateur, avec une vitesse réglable.
 
 Pour la mise en ligne, suis **`MISE_EN_LIGNE.md`**. Tant que `js/firebase-config.js` n'est pas rempli, le jeu démarre en solo.
@@ -16,9 +16,12 @@ Pour la mise en ligne, suis **`MISE_EN_LIGNE.md`**. Tant que `js/firebase-config
 ## Comment jouer
 
 1. **Fonder sa colonie** : choisis un nom, puis clique sur une case libre de la terre ferme, à au moins 4 cases d'une autre colonie. Ta reine s'y installe avec 30 fourmiz.
-2. **Ordres** : clique sur une de tes cases, choisis la part de fourmiz à envoyer (25 %, 50 %, 75 % ou tout), puis clique sur une case voisine surlignée :
-   - en jaune, c'est une de tes cases : **renfort** ;
-   - en rouge, c'est une case sauvage ou ennemie : **attaque**. Survole une case pour voir combien de fourmiz il faut pour la prendre.
+2. **Ordres** :
+   - **glisse** d'une de tes cases vers une autre pour y envoyer des fourmiz, même loin : elles passent par tes galeries, plus vite que sur un terrain inconnu. La cible peut être une de tes cases (renfort) ou une case qui touche ton territoire (attaque) ;
+   - ou **touche** une de tes cases, puis une case voisine surlignée (jaune : renfort, rouge : attaque) ;
+   - choisis la part envoyée (25 %, 50 %, 75 % ou tout) dans la barre d'action ;
+   - **Rassembler ici** fait venir vers la case choisie les fourmiz en trop de tout ton territoire.
+   - Les boutons 👑, 🐜 et 🗺️ te ramènent à ton nid, à ta plus grosse armée ou à tout ton territoire.
 3. **Nourriture** : chaque case occupée par au moins une fourmi récolte de la nourriture selon son biome et la saison. Chaque fourmi en consomme. Si le stock tombe à zéro, c'est la **famine** et tes fourmiz meurent.
 4. **Reine** : elle pond des fourmiz au nid en consommant de la nourriture (ponte arrêtée, normale ou intensive). Si un ennemi prend ton nid, la reine meurt. Tu pourras en élever une nouvelle sur une case avec assez de fourmiz et de nourriture.
 5. **Saisons** : en hiver, la récolte chute et la reine pond moins (sauf sous les tropiques). L'hémisphère sud a les saisons inversées.

@@ -75,7 +75,7 @@
   /**
    * Crée un monde neuf, déjà en cours, peuplé de colonies IA.
    * Les joueurs humains le rejoignent ensuite avec joinColony.
-   * @param {object} opts { seed, aiCount, era }
+   * @param {object} opts { seed, aiCount, era, now }
    */
   function createWorldState(world, cfg, opts) {
     opts = opts || {};
@@ -86,7 +86,8 @@
       seed,
       rng: seed,
       tick: 0,
-      lastTickAt: 0,
+      /** Horodatage (ms) du tick 0 : le tick courant vaut (maintenant - startedAt) / durée d'un tick. */
+      startedAt: opts.now || 0,
       phase: 'playing',
       landCount: world.ids.length,
       colonies: [],
@@ -118,8 +119,22 @@
       col.stats = col.stats || {};
       if (col.uid === undefined) col.uid = null;
     }
+    for (const m of state.moves) {
+      if (!m.path) m.path = [m.from, m.to];
+      if (!m.legs) m.legs = [0, m.arrive - m.depart];
+      m.path = toArray(m.path);
+      m.legs = toArray(m.legs);
+    }
     if (state.winner == null) state.winner = -1;
     return state;
+  }
+
+  /** Durée d'un tick en millisecondes. */
+  function tickMs(cfg) { return cfg.time.tickSeconds * 1000; }
+
+  /** Nombre de ticks que le monde doit avoir atteint à l'instant « now » (ms). */
+  function tickAt(state, cfg, now) {
+    return Math.floor((now - state.startedAt) / tickMs(cfg));
   }
 
   function toArray(x) {
@@ -231,7 +246,7 @@
   /**
    * Applique l'ordre d'un joueur. C'est la seule porte d'entrée pour les joueurs :
    * le serveur l'utilise pour valider tout ce que les navigateurs envoient.
-   * @param {object} order { uid, type: 'join'|'send'|'lay'|'queen', ... }
+   * @param {object} order { uid, type: 'join'|'send'|'lay'|'queen'|'rally', ... }
    * @returns {{ok:boolean, reason?:string}}
    */
   function applyOrder(state, world, cfg, order) {
@@ -243,6 +258,7 @@
     if (order.type === 'send') r = sendAnts(state, world, cfg, col.id, String(order.from), String(order.to), Number(order.ants) || 0);
     else if (order.type === 'lay') r = setLayMode(state, cfg, col.id, String(order.mode));
     else if (order.type === 'queen') r = raiseQueen(state, world, cfg, col.id, String(order.cell));
+    else if (order.type === 'rally') r = rally(state, world, cfg, col.id, String(order.cell));
     else return { ok: false, reason: 'Ordre inconnu.' };
     refreshStats(state, world, cfg);
     return r;
@@ -250,26 +266,132 @@
 
   // ---------- Actions des joueurs ----------
 
-  /** Durée d'un trajet vers une case (dépend du terrain d'arrivée). */
+  /** Durée d'un pas vers une case (dépend du terrain d'arrivée ; plus rapide dans ses galeries). */
+  function stepTicks(world, cfg, to, tunnel) {
+    const t = cfg.movement.baseTravelTicks * cfg.biomes[world.cells[to].biome].travel * (tunnel ? cfg.movement.tunnelFactor : 1);
+    return Math.max(1, Math.round(t));
+  }
+
+  /** Durée d'un trajet direct vers une case voisine. */
   function travelTicks(world, cfg, to) {
-    return Math.max(1, Math.round(cfg.movement.baseTravelTicks * cfg.biomes[world.cells[to].biome].travel));
+    return stepTicks(world, cfg, to, false);
+  }
+
+  function owns(state, colonyId, id) {
+    const c = state.cells[id];
+    return !!c && c.owner === colonyId;
   }
 
   /**
-   * Envoie n fourmiz d'une case vers une case voisine (renfort ou attaque).
+   * Plus court chemin d'une case à soi vers une case cible, en passant uniquement par ses propres cases
+   * (les galeries). La cible peut être à soi (renfort) ou toucher son territoire (attaque, expansion).
+   * @returns {{ok:boolean, reason?:string, path?:string[]}}
+   */
+  function findPath(state, world, cfg, colonyId, from, to) {
+    if (!owns(state, colonyId, from)) return { ok: false, reason: 'Cette case ne t’appartient pas.' };
+    if (!world.cells[to]) return { ok: false, reason: 'Case invalide.' };
+    if (from === to) return { ok: false, reason: 'Choisis une autre case.' };
+    const targetOwn = owns(state, colonyId, to);
+    const max = cfg.movement.maxPathLength;
+    const prev = { [from]: null };
+    const depth = { [from]: 0 };
+    const queue = [from];
+    for (let qi = 0; qi < queue.length; qi++) {
+      const cur = queue[qi];
+      if (depth[cur] >= max) continue;
+      for (const nb of world.neighbors(cur)) {
+        if (nb in prev) continue;
+        if (nb === to) {
+          prev[nb] = cur;
+          const path = [nb];
+          for (let x = cur; x != null; x = prev[x]) path.push(x);
+          return { ok: true, path: path.reverse() };
+        }
+        if (!owns(state, colonyId, nb)) continue;
+        prev[nb] = cur;
+        depth[nb] = depth[cur] + 1;
+        queue.push(nb);
+      }
+    }
+    return { ok: false, reason: targetOwn ? 'Aucun chemin par tes galeries jusqu’à cette case.' : 'Cette case doit toucher ton territoire.' };
+  }
+
+  /** Durées cumulées (en ticks) pour atteindre chaque case d'un chemin. */
+  function pathLegs(state, world, cfg, colonyId, path) {
+    const legs = [0];
+    for (let i = 1; i < path.length; i++) {
+      const tunnel = owns(state, colonyId, path[i]);
+      legs.push(legs[i - 1] + stepTicks(world, cfg, path[i], tunnel));
+    }
+    return legs;
+  }
+
+  function launch(state, world, cfg, colonyId, path, n) {
+    const src = state.cells[path[0]];
+    src.ants -= n;
+    const legs = pathLegs(state, world, cfg, colonyId, path);
+    const move = {
+      id: state.nextMoveId++, owner: colonyId, from: path[0], to: path[path.length - 1], ants: n,
+      depart: state.tick, arrive: state.tick + legs[legs.length - 1], path, legs,
+    };
+    state.moves.push(move);
+    return move;
+  }
+
+  /**
+   * Envoie n fourmiz d'une case vers une autre : une voisine, ou n'importe quelle case
+   * atteignable par ses galeries (renfort lointain, attaque à la frontière).
    * @returns {{ok:boolean, reason?:string, move?:object}}
    */
   function sendAnts(state, world, cfg, colonyId, from, to, n) {
     if (state.phase !== 'playing') return { ok: false, reason: 'La partie n’est pas en cours.' };
     const src = state.cells[from];
     if (!src || src.owner !== colonyId) return { ok: false, reason: 'Cette case ne t’appartient pas.' };
-    if (world.neighbors(from).indexOf(to) < 0) return { ok: false, reason: 'Cible non adjacente.' };
     n = Math.floor(Math.min(n, src.ants));
     if (n < 1) return { ok: false, reason: 'Pas assez de fourmiz.' };
-    src.ants -= n;
-    const move = { id: state.nextMoveId++, owner: colonyId, from, to, ants: n, depart: state.tick, arrive: state.tick + travelTicks(world, cfg, to) };
-    state.moves.push(move);
-    return { ok: true, move };
+    const p = findPath(state, world, cfg, colonyId, from, to);
+    if (!p.ok) return p;
+    return { ok: true, move: launch(state, world, cfg, colonyId, p.path, n) };
+  }
+
+  /**
+   * « Rassembler ici » : chaque case de la colonie envoie ses fourmiz en trop vers la case choisie,
+   * par les galeries (en gardant de quoi récolter). Les plus grosses réserves partent en premier.
+   * @returns {{ok:boolean, reason?:string, count?:number, ants?:number}}
+   */
+  function rally(state, world, cfg, colonyId, target) {
+    if (state.phase !== 'playing') return { ok: false, reason: 'La partie n’est pas en cours.' };
+    if (!owns(state, colonyId, target)) return { ok: false, reason: 'Choisis une de tes cases.' };
+    const keep = cfg.movement.rallyKeep;
+    const max = cfg.movement.maxPathLength;
+    // Parcours depuis la cible : prev[x] = case suivante vers la cible
+    const next = { [target]: null };
+    const depth = { [target]: 0 };
+    const queue = [target];
+    for (let qi = 0; qi < queue.length; qi++) {
+      const cur = queue[qi];
+      if (depth[cur] >= max) continue;
+      for (const nb of world.neighbors(cur)) {
+        if (nb in next || !owns(state, colonyId, nb)) continue;
+        next[nb] = cur;
+        depth[nb] = depth[cur] + 1;
+        queue.push(nb);
+      }
+    }
+    const sources = queue.slice(1).filter((id) => state.cells[id].ants > keep)
+      .sort((a, b) => state.cells[b].ants - state.cells[a].ants)
+      .slice(0, cfg.movement.rallyMaxSources);
+    let count = 0, total = 0;
+    for (const id of sources) {
+      const path = [];
+      for (let x = id; x != null; x = next[x]) path.push(x);
+      const n = state.cells[id].ants - keep;
+      launch(state, world, cfg, colonyId, path, n);
+      count++;
+      total += n;
+    }
+    if (!count) return { ok: false, reason: 'Aucune fourmi à rassembler.' };
+    return { ok: true, count, ants: total };
   }
 
   /** Change le mode de ponte de la reine (stop / normal / intense). */
@@ -492,7 +614,7 @@
 
   const SIM = {
     rand, hash01, getCell, seasonAt, createWorldState, hydrate, joinColony, canFound,
-    colonyOf, applyOrder, sendAnts, setLayMode, raiseQueen, resolveCombat, forceNeeded, defenseFactor,
+    colonyOf, applyOrder, sendAnts, rally, findPath, pathLegs, tickMs, tickAt, setLayMode, raiseQueen, resolveCombat, forceNeeded, defenseFactor,
     travelTicks, refreshStats, step, wildGarrison,
   };
 

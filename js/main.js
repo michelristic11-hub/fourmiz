@@ -1,6 +1,6 @@
 /**
  * Fourmiz — point d'entrée : charge le monde, crée la carte, branche le bon « backend »
- * (en ligne avec Firebase, ou solo dans le navigateur) et relie les clics aux ordres.
+ * (en ligne avec Firebase, ou solo dans le navigateur) et relie clics et glisser-déposer aux ordres.
  */
 (function () {
   'use strict';
@@ -16,7 +16,8 @@
 
   let world, gm, ui, backend;
   let state = null;
-  let selected = null;
+  let selected = null;   // case à soi choisie (barre d'action avec ordres)
+  let inspected = null;  // autre case touchée (fiche seule)
   let share = 0.5;
   let dirty = true;
   let hadColony = false;
@@ -31,16 +32,14 @@
   else modeLink.hidden = true;
 
   function me() { return state && backend ? SIM.colonyOf(state, backend.uid) : null; }
+  function mine(id, m) { m = m || me(); return !!(m && id && state.cells[id] && state.cells[id].owner === m.id); }
 
   function highlight() {
     const hl = {};
     const m = me();
-    if (m && selected && state.cells[selected] && state.cells[selected].owner === m.id && state.phase === 'playing') {
+    if (m && selected && mine(selected, m) && state.phase === 'playing') {
       hl[selected] = 1;
-      for (const nb of world.neighbors(selected)) {
-        const c = state.cells[nb];
-        hl[nb] = c && c.owner === m.id ? 2 : 3;
-      }
+      for (const nb of world.neighbors(selected)) hl[nb] = mine(nb, m) ? 2 : 3;
     } else {
       selected = null;
     }
@@ -50,9 +49,24 @@
   function send(order, okText) {
     const r = backend.send(order);
     if (!r.ok) ui.say(r.reason);
-    else if (okText) ui.say(okText + (r.pending ? '' : ''));
+    else if (okText) ui.say(okText);
     dirty = true;
     return r;
+  }
+
+  /** Envoie la part choisie des fourmiz d'une case vers une autre (voisine ou par les galeries). */
+  function sendFrom(from, to) {
+    const m = me();
+    const src = state.cells[from];
+    if (!m || !src || src.ants < 1) return ui.say('Plus aucune fourmi sur cette case.');
+    const n = Math.max(1, Math.floor(src.ants * share));
+    const p = SIM.findPath(state, world, cfg, m.id, from, to);
+    if (!p.ok) return ui.say(p.reason);
+    const legs = SIM.pathLegs(state, world, cfg, m.id, p.path);
+    const eta = ui.duration(legs[legs.length - 1]);
+    const text = mine(to, m) ? `🐜 ${n} fourmiz en route · arrivée dans ${eta}`
+      : `⚔️ ${n} fourmiz à l'attaque (besoin ≈ ${SIM.forceNeeded(state, world, cfg, to)}) · ${eta}`;
+    send({ type: 'send', from, to, ants: n }, text);
   }
 
   function onClick(id) {
@@ -69,32 +83,81 @@
       if (r.ok) selected = id;
       return;
     }
-    if (selected && id && id !== selected && world.neighbors(selected).indexOf(id) >= 0) {
-      const src = state.cells[selected];
-      const n = Math.max(1, Math.floor(src.ants * share));
-      if (src.ants < 1) return ui.say('Plus aucune fourmi sur cette case.');
-      const target = SIM.getCell(state, world, cfg, id);
-      const text = target.owner === m.id ? `🐜 ${n} fourmiz en renfort.`
-        : `⚔️ ${n} fourmiz à l'attaque (besoin ≈ ${SIM.forceNeeded(state, world, cfg, id)}).`;
-      send({ type: 'send', from: selected, to: id, ants: n }, text);
-      return;
-    }
-    if (id && state.cells[id] && state.cells[id].owner === m.id) selected = id === selected ? null : id;
-    else selected = null;
     dirty = true;
+    inspected = null;
+    if (!id) { selected = null; return; }
+    if (id === selected) { selected = null; return; }
+    if (selected) {
+      const neighbor = world.neighbors(selected).indexOf(id) >= 0;
+      if (mine(id, m) && !neighbor) { selected = id; return; }
+      if (neighbor || SIM.findPath(state, world, cfg, m.id, selected, id).ok) { sendFrom(selected, id); return; }
+    }
+    if (mine(id, m)) selected = id;
+    else { selected = null; inspected = id; }
   }
 
+  // ---------- Glisser-déposer ----------
+  const drag = {
+    canDrag(id, isTouch) {
+      const m = me();
+      if (!m || !state || state.phase !== 'playing' || !mine(id, m) || state.cells[id].ants < 1) return false;
+      return isTouch ? id === selected : true; // au doigt : d'abord toucher la case, puis glisser
+    },
+    dragOver(from, over, point) {
+      const m = me();
+      if (!m || !state) return;
+      if (over === from) { gm.showPath(null); ui.dragTip(null); return; }
+      const p = SIM.findPath(state, world, cfg, m.id, from, over);
+      if (!p.ok) { gm.showPath(null); ui.dragTip('🚫 ' + p.reason, point); return; }
+      gm.showPath(p.path, m.color);
+      const n = Math.max(1, Math.floor(state.cells[from].ants * share));
+      const legs = SIM.pathLegs(state, world, cfg, m.id, p.path);
+      const what = mine(over, m) ? 'renfort' : `attaque (besoin ≈ ${SIM.forceNeeded(state, world, cfg, over)})`;
+      ui.dragTip(`🐜 ${n} · ${what} · ${ui.duration(legs[legs.length - 1])}`, point);
+    },
+    dragEnd(from, to) {
+      gm.showPath(null);
+      ui.dragTip(null);
+      if (from && to) { selected = from; inspected = null; sendFrom(from, to); }
+    },
+  };
+
+  // ---------- Actions ----------
+  function ownCells() {
+    const m = me();
+    if (!m) return [];
+    return Object.keys(state.cells).filter((id) => state.cells[id].owner === m.id);
+  }
   const actions = {
     speed(v) { if (backend.setSpeed) backend.setSpeed(v); },
     share(v) { share = v; },
     layMode(m) { send({ type: 'lay', mode: m }); },
-    newGame() { selected = null; hadColony = false; gm.reset(); backend.newGame(); ui.hideOverlay(); },
-    raiseQueen() { if (selected) send({ type: 'queen', cell: selected }, '👑 Une nouvelle reine est demandée.'); },
+    newGame() { selected = inspected = null; hadColony = false; gm.reset(); backend.newGame(); ui.hideOverlay(); },
+    raiseQueen() { if (selected) send({ type: 'queen', cell: selected }, '👑 Une nouvelle reine s’installe.'); },
+    rally() {
+      if (!selected) return;
+      send({ type: 'rally', cell: selected }, '📣 Rassemblement : les fourmiz en trop arrivent par tes galeries.');
+    },
+    closeSelection() { selected = inspected = null; dirty = true; },
     overlayButton() {
       if (mode === 'online' && !backend.user) backend.signIn();
       else if (mode === 'solo') actions.newGame();
     },
     userButton() { if (backend.user) backend.signOut(); else backend.signIn(); },
+    goNest() {
+      const m = me();
+      if (m && m.nest) { gm.flyTo(m.nest, 5); selected = m.nest; dirty = true; }
+      else ui.say('Tu n’as plus de nid : élève une nouvelle reine.');
+    },
+    goArmy() {
+      const ids = ownCells();
+      if (!ids.length) return;
+      const best = ids.reduce((a, b) => (state.cells[b].ants > state.cells[a].ants ? b : a));
+      gm.flyTo(best, 5);
+      selected = best;
+      dirty = true;
+    },
+    goAll() { gm.fitCells(ownCells()); },
   };
 
   function onState(s) {
@@ -110,7 +173,7 @@
     }
     const m = me();
     if (m) {
-      if ((joinPending || !hadColony) && m.nest) { gm.flyTo(m.nest, 4); if (!selected) selected = m.nest; }
+      if ((joinPending || !hadColony) && m.nest) { gm.flyTo(m.nest, 4.5); if (!selected) selected = m.nest; }
       joinPending = false;
       hadColony = true;
     }
@@ -129,19 +192,20 @@
     if (dirty && now - lastRender > 200) {
       lastRender = now;
       dirty = false;
-      gm.render(state);
+      const m = me();
+      gm.render(state, m ? m.id : -1, backend.tickFloat());
       highlight();
       renderUI();
-      if (hoverId) ui.hover(state, world, me(), hoverId, hoverPoint);
-    } else if (now - lastMoves > 250 && state.moves.length) {
+      if (hoverId) ui.hover(state, world, m, hoverId, hoverPoint);
+    } else if (now - lastMoves > 150 && state.moves.length) {
       lastMoves = now;
       gm.renderMoves(state, backend.tickFloat());
     }
   }
   function renderUI() {
     ui.update(state, world, {
-      me: me(), selected, mode, hadColony, joinPending,
-      net: mode === 'online' ? { connected: backend.connected, nextTickIn: backend.nextTickIn() } : null,
+      me: me(), selected, inspected, mode, hadColony, joinPending,
+      net: mode === 'online' ? { connected: backend.connected } : null,
     });
   }
 
@@ -158,10 +222,10 @@
       const land = await FZ.WORLD.loadLand(window.topojson);
       world = FZ.WORLD.buildWorld(window.h3, land, cfg);
       console.info(`Monde : ${world.ids.length} cases en ${Math.round(performance.now() - t0)} ms`);
-      gm = await FZ.MAP.createMap(document.getElementById('map'), world, cfg, {
+      gm = await FZ.MAP.createMap(document.getElementById('map'), world, cfg, Object.assign({
         click: onClick,
         hover(id, point) { hoverId = id; hoverPoint = point; if (state) ui.hover(state, world, me(), id, point); },
-      });
+      }, drag));
     } catch (e) {
       console.error(e);
       ui.overlay('Erreur au chargement du monde : ' + e.message);
@@ -199,9 +263,8 @@
       });
     }
     backend.start(onState);
-    setInterval(loop, 100);
-    if (mode === 'online') setInterval(() => { if (state) renderUI(); }, 1000);
-    window.FZ.debug = { get state() { return state; }, world, gm, onClick, actions, get backend() { return backend; } };
+    setInterval(loop, 50);
+    window.FZ.debug = { get state() { return state; }, world, gm, onClick, actions, drag, get backend() { return backend; } };
   }
 
   boot();

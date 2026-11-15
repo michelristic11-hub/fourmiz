@@ -168,25 +168,43 @@ test('IA : les colonies rivales s’étendent', () => {
   assert.ok(s.colonies.some((c) => c.alive && c.stats.territories > 3));
 });
 
-test('serveur : crée le monde, avance, survit à l’aller-retour Firebase', () => {
+test('serveur : temps continu, rattrapage, ordres, aller-retour Firebase', () => {
   const w = fakeWorld(40, 30);
   const cfg = clone(CONFIG);
   cfg.online.aiCount = 2;
+  cfg.victory.landShare = 1; // pas de fin de partie pendant ce test
+  const ms = cfg.time.tickSeconds * 1000;
   let s = ENGINE.runTick(null, w, cfg, 1000);
   assert.strictEqual(s.tick, 0);
-  assert.strictEqual(s.lastTickAt, 1000);
-  s = ENGINE.runTick(throughFirebase(s), w, cfg, 61000);
-  assert.strictEqual(s.tick, 1);
-  let out = ENGINE.runOrder(throughFirebase(s), w, cfg, { uid: 'u1', type: 'join', name: 'Alice', cell: w.ids[123] });
+  assert.strictEqual(s.startedAt, 1000);
+  s = ENGINE.runTick(throughFirebase(s), w, cfg, 1000 + 60000);
+  assert.strictEqual(s.tick, 60000 / ms, 'une minute = 30 ticks de 2 s');
+  let out = ENGINE.runOrder(throughFirebase(s), w, cfg, { uid: 'u1', type: 'join', name: 'Alice', cell: w.ids[123] }, 1000 + 61000);
   assert.ok(out.result.ok, out.result.reason);
+  assert.strictEqual(out.state.tick, 30, 'l’ordre rattrape le temps avant de s’appliquer (61 s → tick 30)');
   s = out.state;
   const me = SIM.colonyOf(s, 'u1');
-  out = ENGINE.runOrder(throughFirebase(s), w, cfg, { uid: 'u1', type: 'send', from: me.nest, to: w.neighbors(me.nest)[0], ants: 10 });
+  out = ENGINE.runOrder(throughFirebase(s), w, cfg, { uid: 'u1', type: 'send', from: me.nest, to: w.neighbors(me.nest)[0], ants: 10 }, 1000 + 62000);
   assert.ok(out.result.ok, out.result.reason);
-  for (let t = 0; t < 20; t++) s = ENGINE.runTick(throughFirebase(out.state = s), w, cfg, 121000 + t * 60000);
-  assert.ok(s.tick >= 20);
+  s = ENGINE.runTick(throughFirebase(out.state), w, cfg, 1000 + 10 * 60000);
+  assert.strictEqual(s.tick, 300);
   assert.ok(SIM.colonyOf(s, 'u1'));
-  assert.doesNotThrow(() => JSON.stringify(s));
+  // Long arrêt du serveur : on ne rattrape pas plus que maxCatchUpTicks
+  s = ENGINE.runTick(throughFirebase(s), w, cfg, 1000 + 10 * 3600000);
+  assert.strictEqual(s.tick, 300 + cfg.online.maxCatchUpTicks);
+});
+
+test('serveur : migration d’un monde de l’ancienne version (tours d’une minute)', () => {
+  const w = fakeWorld();
+  const cfg = cfgNoAI();
+  const old = worldWithPlayer(w, cfg);
+  delete old.startedAt;
+  old.tick = 50;
+  old.lastTickAt = 5000000;
+  old.moves = [{ id: 1, owner: 0, from: 'c5_5', to: 'c6_5', ants: 3, depart: 49, arrive: 53 }];
+  const s = ENGINE.runTick(throughFirebase(old), w, cfg, 5000000 + 4000);
+  assert.strictEqual(s.tick, 52);
+  assert.ok(!('lastTickAt' in s));
 });
 
 test('serveur : nouveau monde après une victoire', () => {
@@ -196,10 +214,51 @@ test('serveur : nouveau monde après une victoire', () => {
   s.phase = 'over';
   s = ENGINE.runTick(s, w, cfg, 1000);
   assert.strictEqual(s.phase, 'over');
-  const wait = cfg.online.resetAfterTicks * cfg.online.tickSeconds * 1000;
-  s = ENGINE.runTick(s, w, cfg, 1000 + wait);
+  s = ENGINE.runTick(s, w, cfg, 1000 + cfg.online.resetAfterMinutes * 60000);
   assert.strictEqual(s.phase, 'playing');
   assert.strictEqual(s.era, 2);
+});
+
+test('trajet longue distance par les galeries, plus rapide chez soi', () => {
+  const w = fakeWorld();
+  const cfg = cfgNoAI();
+  const s = worldWithPlayer(w, cfg);
+  const me = SIM.colonyOf(s, 'u1');
+  for (let q = 6; q <= 12; q++) s.cells[`c${q}_5`] = { owner: me.id, ants: 1 };
+  // Renfort lointain vers une case à soi
+  let r = SIM.applyOrder(s, w, cfg, { uid: 'u1', type: 'send', from: 'c5_5', to: 'c12_5', ants: 10 });
+  assert.ok(r.ok, r.reason);
+  const mv = s.moves[s.moves.length - 1];
+  assert.strictEqual(mv.path.length, 8);
+  const direct = SIM.findPath(s, w, cfg, me.id, 'c5_5', 'c6_5');
+  assert.deepStrictEqual(direct.path, ['c5_5', 'c6_5']);
+  assert.ok(mv.arrive - mv.depart < 7 * cfg.movement.baseTravelTicks * 1.1, 'les galeries accélèrent');
+  // Attaque à distance : la cible touche le territoire
+  r = SIM.applyOrder(s, w, cfg, { uid: 'u1', type: 'send', from: 'c5_5', to: 'c13_5', ants: 10 });
+  assert.ok(r.ok, r.reason);
+  // Cible loin de tout : refusée
+  r = SIM.applyOrder(s, w, cfg, { uid: 'u1', type: 'send', from: 'c5_5', to: 'c20_15', ants: 5 });
+  assert.strictEqual(r.ok, false);
+  for (let i = 0; i < 60; i++) SIM.step(s, w, cfg);
+  assert.ok(s.cells.c12_5.ants >= 11, 'le renfort est arrivé');
+  assert.strictEqual(s.cells.c13_5.owner, me.id, 'la case lointaine est prise');
+});
+
+test('rassembler ici : les fourmiz en trop convergent', () => {
+  const w = fakeWorld();
+  const cfg = cfgNoAI();
+  const s = worldWithPlayer(w, cfg);
+  const me = SIM.colonyOf(s, 'u1');
+  for (let q = 6; q <= 10; q++) s.cells[`c${q}_5`] = { owner: me.id, ants: 20 };
+  SIM.setLayMode(s, cfg, me.id, 'stop');
+  const before = Object.keys(s.cells).reduce((t, k) => t + s.cells[k].ants, 0);
+  const r = SIM.applyOrder(s, w, cfg, { uid: 'u1', type: 'rally', cell: 'c10_5' });
+  assert.ok(r.ok, r.reason);
+  assert.strictEqual(s.cells.c6_5.ants, cfg.movement.rallyKeep);
+  me.food = 1000;
+  for (let i = 0; i < 60; i++) SIM.step(s, w, cfg);
+  assert.ok(s.cells.c10_5.ants >= before - 5 * cfg.movement.rallyKeep - 2, 'presque tout est arrivé au point de ralliement');
+  assert.strictEqual(SIM.applyOrder(s, w, cfg, { uid: 'u1', type: 'rally', cell: 'c20_15' }).ok, false);
 });
 
 test('biomes : quelques repères géographiques', () => {

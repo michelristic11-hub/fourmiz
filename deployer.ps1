@@ -39,13 +39,16 @@ npm install 2>&1 | Tee-Object -FilePath $log -Append
 Pop-Location
 
 Log '5/5 Deploiement (2 a 5 minutes)'
-firebase deploy --only "functions,database" --force 2>&1 | Tee-Object -FilePath $log -Append
+firebase deploy --only "functions,database" --force 2>&1 | ForEach-Object { "$_"; "$_" | Out-File $log -Append -Encoding utf8 }
+$ok = ($LASTEXITCODE -eq 0)
 
-if ((Get-Content $log -Raw) -match 'Deploy complete') {
+if ($ok) {
   Write-Host ''
   Write-Host 'TERMINE ! Attends 1 minute puis ouvre https://michelristic11-hub.github.io/fourmiz/' -ForegroundColor Green
+  'OK: deploiement reussi' | Out-File $log -Append -Encoding utf8
 } else {
   Write-Host ''
   Write-Host 'Le deploiement n a pas abouti. Dis-le a Claude : il lira le fichier deploiement-log.txt.' -ForegroundColor Red
+  'ECHEC: deploiement' | Out-File $log -Append -Encoding utf8
 }
 Fin 0

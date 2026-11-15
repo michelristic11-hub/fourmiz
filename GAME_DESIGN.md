@@ -32,13 +32,13 @@ games/monde/orders/{id}         ordres des joueurs : join, send, lay, queen (éc
 games/monde/results/{uid}       résultat du dernier ordre de chaque joueur (accepté ou refusé, avec la raison)
 ```
 
-- **`tick`** (Cloud Function planifiée chaque minute) : fait avancer le monde d'un tour avec `SIM.step` et l'IA, dans une transaction. Elle crée le monde s'il n'existe pas, et recrée un nouveau monde une heure après une victoire.
+- **`tick`** (Cloud Function planifiée chaque minute) : rattrape le temps écoulé (30 ticks de 2 s) avec `SIM.step` et l'IA, dans une transaction. Elle crée le monde s'il n'existe pas, et recrée un nouveau monde une heure après une victoire.
 - **`order`** (déclenchée à chaque ordre) : valide l'ordre avec `SIM.applyOrder` (bonne colonie, case voisine, assez de fourmiz…), l'applique dans une transaction, puis écrit le résultat.
 - **Client** : écoute `state` en temps réel et envoie des ordres. Il ne calcule rien : impossible de tricher.
 - **Sécurité** : les règles n'autorisent que la lecture de l'état et la création d'ordres signés de son propre `uid`.
 - **Le même `sim.js`** tourne dans le navigateur (mode solo) et sur le serveur.
 
-Rythme : 1 tour par minute. Une saison dure environ 2 heures, une année 8 heures, et un trajet quelques minutes. Tout se règle dans `config.js` (`online.ticksPerRun`, `seasons.lengthTicks`…).
+Rythme : pas de tours. Le monde avance d'un tick toutes les 2 s. Le serveur rattrape le temps écoulé chaque minute et à chaque ordre ; le navigateur prédit la suite entre deux mises à jour avec le même `sim.js` et applique tout de suite les ordres du joueur. Une saison dure 10 minutes, une année 40 minutes.
 
 ## Prochaines étapes
 

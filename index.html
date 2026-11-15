@@ -2,7 +2,8 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#2b2118">
   <title>Fourmiz — Conquête du monde</title>
   <link rel="icon" href="fourmiz.ico">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
@@ -28,10 +29,18 @@
     </div>
   </header>
 
-  <aside id="panel">
+  <nav id="mapbtns" aria-label="Aller à">
+    <button id="go-nest" title="Aller à mon nid">👑</button>
+    <button id="go-army" title="Aller à ma plus grosse armée">🐜</button>
+    <button id="go-all" title="Voir tout mon territoire">🗺️</button>
+  </nav>
+
+  <aside id="panel" class="collapsed">
+    <button id="panel-toggle" type="button" aria-expanded="false"><span class="grip"></span><span id="panel-toggle-text">Détails</span></button>
+
     <section id="join" hidden>
       <h2>Fonde ta colonie</h2>
-      <p class="hint" id="join-text">Choisis un nom, puis clique sur une case libre de la carte pour y installer ta reine et tes premières fourmiz.</p>
+      <p class="hint" id="join-text">Choisis un nom, puis touche une case libre de la carte pour y installer ta reine et tes premières fourmiz.</p>
       <label class="label" for="join-name">Nom de ta colonie</label>
       <input id="join-name" maxlength="24" autocomplete="off" placeholder="Les Intrépides">
     </section>
@@ -41,53 +50,74 @@
       <div class="stat-row">
         <div class="stat"><span class="label">Fourmiz</span><span class="value" id="st-ants">0</span></div>
         <div class="stat"><span class="label">Territoires</span><span class="value" id="st-terr">0</span></div>
-        <div class="stat"><span class="label">Reine</span><span class="value" id="st-queen">👑</span></div>
+        <div class="stat"><span class="label">Nourriture</span><span class="value" id="st-food-short">0</span></div>
       </div>
-      <div class="food">
-        <div class="food-head"><span class="label">Nourriture</span><span id="st-food">0 / 0</span></div>
-        <div class="bar"><div id="food-bar"></div></div>
-        <div class="food-detail" id="st-net">—</div>
-      </div>
-      <div class="lay">
-        <span class="label">Ponte de la reine</span>
-        <div class="seg" id="lay-modes">
-          <button data-mode="stop">Arrêt</button>
-          <button data-mode="normal" class="on">Normale</button>
-          <button data-mode="intense">Intensive</button>
+      <div class="more">
+        <div class="food">
+          <div class="food-head"><span class="label">Réserve</span><span id="st-food">0 / 0</span></div>
+          <div class="bar"><div id="food-bar"></div></div>
+          <div class="food-detail" id="st-net">—</div>
         </div>
-        <div class="hint" id="lay-info"></div>
+        <div class="lay">
+          <span class="label">Ponte de la reine <span id="st-queen">👑</span></span>
+          <div class="seg" id="lay-modes">
+            <button data-mode="stop">Arrêt</button>
+            <button data-mode="normal" class="on">Normale</button>
+            <button data-mode="intense">Intensive</button>
+          </div>
+          <div class="hint" id="lay-info"></div>
+        </div>
       </div>
     </section>
 
-    <section id="selection">
-      <h3>Case sélectionnée</h3>
-      <div id="sel-empty" class="hint">Clique sur une de tes cases pour donner des ordres.</div>
-      <div id="sel-body" hidden>
-        <div id="sel-info"></div>
-        <span class="label">Fourmiz à envoyer</span>
-        <div class="seg" id="send-share">
-          <button data-share="0.25">25 %</button>
-          <button data-share="0.5" class="on">50 %</button>
-          <button data-share="0.75">75 %</button>
-          <button data-share="1">Tout</button>
-        </div>
-        <div class="hint">Clique ensuite sur une case voisine surlignée : renfort si elle est à toi (jaune), attaque sinon (rouge).</div>
-        <button id="btn-queen" class="primary" hidden>Élever une nouvelle reine ici</button>
-      </div>
+    <section id="help" class="more">
+      <h3>Comment jouer</h3>
+      <ul class="tips">
+        <li><b>Glisse</b> d'une de tes cases vers une autre pour envoyer des fourmiz, même loin : elles passent par tes galeries.</li>
+        <li>Ou <b>touche</b> une de tes cases, puis une case voisine surlignée.</li>
+        <li><b>Rassembler ici</b> fait venir les fourmiz en trop de tout ton territoire.</li>
+      </ul>
     </section>
 
-    <section id="board">
+    <section id="board" class="more">
       <h3>Classement <span class="hint" id="goal"></span></h3>
       <ol id="ranking"></ol>
     </section>
 
-    <section id="journal">
+    <section id="legend" class="more">
+      <h3>Biomes <span class="hint">récolte par case</span></h3>
+      <ul id="legend-list"></ul>
+    </section>
+
+    <section id="journal" class="more">
       <h3>Journal</h3>
       <ul id="log"></ul>
     </section>
   </aside>
 
+  <div id="actionbar" hidden>
+    <div class="ab-head">
+      <div id="ab-info"></div>
+      <button id="ab-close" class="icon" title="Fermer">✕</button>
+    </div>
+    <div id="ab-actions">
+      <span class="label">Fourmiz à envoyer</span>
+      <div class="seg" id="send-share">
+        <button data-share="0.25">25 %</button>
+        <button data-share="0.5" class="on">50 %</button>
+        <button data-share="0.75">75 %</button>
+        <button data-share="1">Tout</button>
+      </div>
+      <div class="ab-buttons">
+        <button id="btn-rally" class="secondary">📣 Rassembler ici</button>
+        <button id="btn-queen" class="primary" hidden>👑 Nouvelle reine</button>
+      </div>
+      <div class="hint">Glisse depuis cette case vers une autre, ou touche une case surlignée.</div>
+    </div>
+  </div>
+
   <div id="hover" hidden></div>
+  <div id="dragtip" hidden></div>
 
   <div id="placement" hidden>
     <div id="placement-text"></div>
