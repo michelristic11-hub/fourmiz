@@ -34,7 +34,7 @@
     function load() {
       try {
         const s = JSON.parse(localStorage.getItem(SAVE_KEY));
-        if (s && s.version === 2 && s.landCount === world.ids.length) return SIM.hydrate(s);
+        if (s && s.version >= 2 && s.landCount === world.ids.length) return SIM.hydrate(s);
       } catch (e) { /* sauvegarde illisible */ }
       return null;
     }

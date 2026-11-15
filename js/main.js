@@ -19,6 +19,7 @@
   let selected = null;   // case à soi choisie (barre d'action avec ordres)
   let inspected = null;  // autre case touchée (fiche seule)
   let share = 0.5;
+  let sendCaste = 'all'; // castes envoyées : 'all' | 'w' | 's' | 'e'
   let dirty = true;
   let hadColony = false;
   let joinPending = false;
@@ -54,19 +55,39 @@
     return r;
   }
 
+  /** Groupe de fourmiz qui partirait de cette case avec les réglages choisis. */
+  function groupFrom(from) {
+    return SIM.pickGroup(state.cells[from], sendCaste, share);
+  }
+
+  /** Texte d'aperçu d'un envoi (renfort ou attaque, force, bonus, durée). */
+  function describeSend(m, path, g) {
+    const legs = SIM.pathLegs(state, world, cfg, m.id, path, g);
+    const eta = ui.duration(legs[legs.length - 1]);
+    const to = path[path.length - 1];
+    if (mine(to, m)) return { ok: true, text: `${ui.castesLine(g)} en renfort · ${eta}` };
+    const p = SIM.attackPreview(state, world, cfg, m.id, path, g);
+    const mods = [];
+    if (p.encircle > 1) mods.push(`encerclement +${Math.round((p.encircle - 1) * 100)} %`);
+    if (p.fatigue < 1) mods.push(`fatigue −${Math.round((1 - p.fatigue) * 100)} %`);
+    const verdict = p.win ? (p.attack > p.defense * 1.3 ? '✅ victoire' : '⚠️ victoire serrée') : '❌ défaite';
+    return {
+      ok: true, win: p.win,
+      text: `⚔️ force ${Math.round(p.attack)} contre ${Math.round(p.defense)} → ${verdict}${mods.length ? ' (' + mods.join(', ') + ')' : ''} · ${eta}`,
+    };
+  }
+
   /** Envoie la part choisie des fourmiz d'une case vers une autre (voisine ou par les galeries). */
   function sendFrom(from, to) {
     const m = me();
     const src = state.cells[from];
-    if (!m || !src || src.ants < 1) return ui.say('Plus aucune fourmi sur cette case.');
-    const n = Math.max(1, Math.floor(src.ants * share));
+    if (!m || !src || SIM.total(src) < 1) return ui.say('Plus aucune fourmi sur cette case.');
+    const g = groupFrom(from);
+    if (SIM.total(g) < 1) return ui.say('Aucune fourmi de cette caste sur la case.');
     const p = SIM.findPath(state, world, cfg, m.id, from, to);
     if (!p.ok) return ui.say(p.reason);
-    const legs = SIM.pathLegs(state, world, cfg, m.id, p.path);
-    const eta = ui.duration(legs[legs.length - 1]);
-    const text = mine(to, m) ? `🐜 ${n} fourmiz en route · arrivée dans ${eta}`
-      : `⚔️ ${n} fourmiz à l'attaque (besoin ≈ ${SIM.forceNeeded(state, world, cfg, to)}) · ${eta}`;
-    send({ type: 'send', from, to, ants: n }, text);
+    const d = describeSend(m, p.path, g);
+    send({ type: 'send', from, to, w: g.w, s: g.s, e: g.e }, d.text);
   }
 
   function onClick(id) {
@@ -100,7 +121,7 @@
   const drag = {
     canDrag(id, isTouch) {
       const m = me();
-      if (!m || !state || state.phase !== 'playing' || !mine(id, m) || state.cells[id].ants < 1) return false;
+      if (!m || !state || state.phase !== 'playing' || !mine(id, m) || SIM.total(state.cells[id]) < 1) return false;
       return isTouch ? id === selected : true; // au doigt : d'abord toucher la case, puis glisser
     },
     dragOver(from, over, point) {
@@ -110,10 +131,9 @@
       const p = SIM.findPath(state, world, cfg, m.id, from, over);
       if (!p.ok) { gm.showPath(null); ui.dragTip('🚫 ' + p.reason, point); return; }
       gm.showPath(p.path, m.color);
-      const n = Math.max(1, Math.floor(state.cells[from].ants * share));
-      const legs = SIM.pathLegs(state, world, cfg, m.id, p.path);
-      const what = mine(over, m) ? 'renfort' : `attaque (besoin ≈ ${SIM.forceNeeded(state, world, cfg, over)})`;
-      ui.dragTip(`🐜 ${n} · ${what} · ${ui.duration(legs[legs.length - 1])}`, point);
+      const g = groupFrom(from);
+      if (SIM.total(g) < 1) { ui.dragTip('🚫 Aucune fourmi de cette caste ici', point); return; }
+      ui.dragTip(describeSend(m, p.path, g).text, point);
     },
     dragEnd(from, to) {
       gm.showPath(null);
@@ -131,7 +151,13 @@
   const actions = {
     speed(v) { if (backend.setSpeed) backend.setSpeed(v); },
     share(v) { share = v; },
+    sendCaste(v) { sendCaste = v; },
     layMode(m) { send({ type: 'lay', mode: m }); },
+    caste(p) { send({ type: 'caste', preset: p }); },
+    evolve(key) {
+      const e = cfg.evolutions.list[key];
+      send({ type: 'evolve', key }, `${e.icon} ${e.name} : niveau supérieur !`);
+    },
     newGame() { selected = inspected = null; hadColony = false; gm.reset(); backend.newGame(); ui.hideOverlay(); },
     raiseQueen() { if (selected) send({ type: 'queen', cell: selected }, '👑 Une nouvelle reine s’installe.'); },
     rally() {
@@ -152,7 +178,7 @@
     goArmy() {
       const ids = ownCells();
       if (!ids.length) return;
-      const best = ids.reduce((a, b) => (state.cells[b].ants > state.cells[a].ants ? b : a));
+      const best = ids.reduce((a, b) => (SIM.power(state.cells[b], cfg) > SIM.power(state.cells[a], cfg) ? b : a));
       gm.flyTo(best, 5);
       selected = best;
       dirty = true;

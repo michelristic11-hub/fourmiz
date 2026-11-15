@@ -22,10 +22,12 @@ Pour la mise en ligne, suis **`MISE_EN_LIGNE.md`**. Tant que `js/firebase-config
    - choisis la part envoyée (25 %, 50 %, 75 % ou tout) dans la barre d'action ;
    - **Rassembler ici** fait venir vers la case choisie les fourmiz en trop de tout ton territoire.
    - Les boutons 👑, 🐜 et 🗺️ te ramènent à ton nid, à ta plus grosse armée ou à tout ton territoire.
-3. **Nourriture** : chaque case occupée par au moins une fourmi récolte de la nourriture selon son biome et la saison. Chaque fourmi en consomme. Si le stock tombe à zéro, c'est la **famine** et tes fourmiz meurent.
-4. **Reine** : elle pond des fourmiz au nid en consommant de la nourriture (ponte arrêtée, normale ou intensive). Si un ennemi prend ton nid, la reine meurt. Tu pourras en élever une nouvelle sur une case avec assez de fourmiz et de nourriture.
-5. **Saisons** : en hiver, la récolte chute et la reine pond moins (sauf sous les tropiques). L'hémisphère sud a les saisons inversées.
-6. **Victoire** : la première colonie qui contrôle 20 % des terres gagne l’ère.
+3. **Castes** : la reine pond des **ouvrières** (elles récoltent), des **soldates** (force 3, mangent deux fois plus) et des **éclaireuses** (deux fois plus rapides). Tu choisis la répartition : Récolte, Équilibre, Guerre ou Exploration. Dans la barre d'action, tu choisis quelles castes envoyer.
+4. **Récolte** : chaque case a un **nombre idéal d'ouvrières** (16 en jungle, 3 en désert…) ; en dessous elle rapporte moins, au-delà presque rien de plus. Plus une case est **loin du nid**, moins elle rapporte (logistique).
+5. **Combat** : chaque attaque compare des forces. **Encercler** une case (l'attaquer en possédant plusieurs cases autour) donne un bonus ; un **long trajet** fatigue ; les cases **proches d'un nid** se défendent mieux. L'aperçu pendant le glisser-déposer annonce le résultat probable.
+6. **Survie** : chaque fourmi mange. En **hiver** (hors tropiques), la récolte chute fortement et la réserve se gâte : prévois des stocks. En famine, les soldates meurent en premier. Si un ennemi prend ton nid, ta reine meurt : élève-en une nouvelle.
+7. **Évolutions** : dépense ta nourriture pour améliorer ta colonie (récolte, greniers, champignonnière, mâchoires, carapace, acide, fécondité, phéromones de piste, galeries), jusqu'au niveau 3.
+8. **Victoire** : la première colonie qui contrôle 30 % des terres gagne l’ère.
 
 En solo, la partie est sauvegardée dans le navigateur. En ligne, le monde vit sur le serveur. Après une victoire, un nouveau monde (une nouvelle « ère ») naît une heure plus tard. Si ta colonie disparaît, tu peux en refonder une.
 

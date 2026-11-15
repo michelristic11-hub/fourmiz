@@ -18,8 +18,8 @@
     <div class="speed solo-only" role="group" aria-label="Vitesse">
       <button data-speed="0" title="Pause">⏸</button>
       <button data-speed="1" class="on">x1</button>
-      <button data-speed="3">x3</button>
-      <button data-speed="10">x10</button>
+      <button data-speed="2">x2</button>
+      <button data-speed="4">x4</button>
     </div>
     <div id="net" class="pill online-only">—</div>
     <div class="top-right">
@@ -52,6 +52,7 @@
         <div class="stat"><span class="label">Territoires</span><span class="value" id="st-terr">0</span></div>
         <div class="stat"><span class="label">Nourriture</span><span class="value" id="st-food-short">0</span></div>
       </div>
+      <div class="castes" id="st-castes"></div>
       <div class="more">
         <div class="food">
           <div class="food-head"><span class="label">Réserve</span><span id="st-food">0 / 0</span></div>
@@ -65,9 +66,16 @@
             <button data-mode="normal" class="on">Normale</button>
             <button data-mode="intense">Intensive</button>
           </div>
+          <span class="label">Castes pondues</span>
+          <div class="seg" id="caste-presets"></div>
           <div class="hint" id="lay-info"></div>
         </div>
       </div>
+    </section>
+
+    <section id="evos" class="more">
+      <h3>Évolutions <span class="hint">payées en nourriture</span></h3>
+      <div id="evo-list"></div>
     </section>
 
     <section id="help" class="more">
@@ -75,7 +83,9 @@
       <ul class="tips">
         <li><b>Glisse</b> d'une de tes cases vers une autre pour envoyer des fourmiz, même loin : elles passent par tes galeries.</li>
         <li>Ou <b>touche</b> une de tes cases, puis une case voisine surlignée.</li>
-        <li><b>Rassembler ici</b> fait venir les fourmiz en trop de tout ton territoire.</li>
+        <li><b>Ouvrières</b> : elles récoltent. Chaque case a un nombre idéal d'ouvrières, et rapporte moins loin du nid.</li>
+        <li><b>Soldates</b> (force 3) pour attaquer, <b>éclaireuses</b> deux fois plus rapides. Attaquer depuis plusieurs côtés donne un bonus ; un long trajet fatigue.</li>
+        <li><b>Rassembler ici</b> fait venir les fourmiz en trop de tout ton territoire. En hiver, la récolte chute et la réserve se gâte : prévois des stocks.</li>
       </ul>
     </section>
 
@@ -102,6 +112,12 @@
     </div>
     <div id="ab-actions">
       <span class="label">Fourmiz à envoyer</span>
+      <div class="seg" id="send-caste">
+        <button data-caste="all" class="on">Toutes</button>
+        <button data-caste="s">⚔️ Soldates</button>
+        <button data-caste="w">🐜 Ouvrières</button>
+        <button data-caste="e">💨 Éclair.</button>
+      </div>
       <div class="seg" id="send-share">
         <button data-share="0.25">25 %</button>
         <button data-share="0.5" class="on">50 %</button>

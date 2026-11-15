@@ -8,8 +8,8 @@
 (function (root) {
   const CONFIG = {
     time: {
-      /** Durée réelle d'un tick, en ligne comme en solo (vitesse x1). */
-      tickSeconds: 2,
+      /** Durée réelle d'un tick, en ligne comme en solo (vitesse x1) : 5 ticks par seconde. */
+      tickSeconds: 0.2,
     },
 
     /** Résolution H3 des territoires (3 ≈ 12 000 cases de terre ferme, ~12 000 km² chacune). */
@@ -18,9 +18,27 @@
     minLatitude: -58,
 
     start: {
-      ants: 30,            // fourmiz de départ à placer
-      food: 60,            // nourriture de départ
+      ants: 30,            // fourmiz de départ (réparties selon startCastes)
+      startCastes: { w: 24, s: 6, e: 0 },
+      food: 100,           // nourriture de départ
       minNestDistance: 4,  // distance minimale (en cases) entre deux nids au départ
+    },
+
+    /**
+     * Castes. power = force au combat, upkeep = nourriture mangée par tick, cost = nourriture pour la pondre,
+     * speed = multiplicateur de durée de trajet (un groupe avance à la vitesse de sa caste la plus lente).
+     */
+    castes: {
+      w: { name: 'Ouvrière', plural: 'ouvrières', icon: '🐜', power: 1, upkeep: 0.04, cost: 1, speed: 1 },
+      s: { name: 'Soldate', plural: 'soldates', icon: '⚔️', power: 3, upkeep: 0.08, cost: 2.5, speed: 1 },
+      e: { name: 'Éclaireuse', plural: 'éclaireuses', icon: '💨', power: 0.6, upkeep: 0.04, cost: 1.5, speed: 0.5 },
+    },
+    /** Répartitions de ponte proposées au joueur (part de chaque caste). */
+    castePresets: {
+      harvest: { label: 'Récolte', mix: { w: 0.85, s: 0.1, e: 0.05 } },
+      balanced: { label: 'Équilibre', mix: { w: 0.6, s: 0.35, e: 0.05 } },
+      war: { label: 'Guerre', mix: { w: 0.3, s: 0.65, e: 0.05 } },
+      scout: { label: 'Exploration', mix: { w: 0.5, s: 0.2, e: 0.3 } },
     },
 
     queen: {
@@ -29,8 +47,6 @@
       /** Bonus de ponte par territoire possédé. */
       layRatePerTerritory: 0.02,
       maxLayRate: 3,
-      /** Coût en nourriture d'une nouvelle fourmi. */
-      foodPerAnt: 1,
       /** Modes de ponte choisis par le joueur : multiplicateur de vitesse et de coût. */
       layModes: {
         stop: { label: 'Arrêt', rate: 0, cost: 0 },
@@ -44,15 +60,20 @@
     },
 
     food: {
-      /** Consommation de nourriture par fourmi et par tick. */
-      upkeepPerAnt: 0.04,
-      /** Une case ne produit que si au moins N fourmiz y récoltent. */
-      minForagers: 1,
+      /** Nombre idéal d'ouvrières sur une case = récolte du biome × ce facteur (ex. jungle 1,6 → 16). */
+      optimalWorkersPerFood: 10,
+      /** Au-delà du nombre idéal, chaque ouvrière en plus rapporte de moins en moins. */
+      overcrowdBonus: 0.1,
+      /** Logistique : distance au nid (en cases) sans pénalité, puis la récolte est divisée par 1 + (d - libre) / portée. */
+      logisticsFree: 2,
+      logisticsRange: 10,
       /** Capacité de stockage : base + par territoire. */
-      storageBase: 200,
-      storagePerTerritory: 20,
+      storageBase: 300,
+      storagePerTerritory: 30,
+      /** En hiver (hors tropiques), part de la réserve qui se gâte à chaque tick. */
+      winterSpoil: 0.0002,
       /** En famine, part des fourmiz qui meurent chaque tick. */
-      starvationRate: 0.02,
+      starvationRate: 0.004,
     },
 
     combat: {
@@ -60,6 +81,16 @@
       defenderBonus: 1.25,
       /** Bonus supplémentaire si la case est le nid de la reine. */
       nestBonus: 1.5,
+      /** Bonus de défense des cases proches du nid (à moins de nestAreaRadius cases). */
+      nestAreaBonus: 1.3,
+      nestAreaRadius: 2,
+      /** Encerclement : +X d'attaque par case de l'attaquant qui touche la cible, au-delà de la première. */
+      encircleBonus: 0.15,
+      encircleMax: 1.6,
+      /** Fatigue : au-delà de fatigueFree cases de trajet, -X d'attaque par case (minimum fatigueMin). */
+      fatigueFree: 3,
+      fatiguePerStep: 0.04,
+      fatigueMin: 0.6,
     },
 
     movement: {
@@ -69,31 +100,31 @@
       tunnelFactor: 0.5,
       /** Longueur maximale d'un trajet (en cases). */
       maxPathLength: 80,
-      /** « Rassembler ici » : fourmiz laissées sur chaque case pour qu'elle continue de récolter. */
+      /** « Rassembler ici » : chaque case garde ses ouvrières utiles (jusqu'au nombre idéal), au moins rallyKeep. */
       rallyKeep: 1,
       /** « Rassembler ici » : nombre maximal de cases qui envoient leurs fourmiz. */
       rallyMaxSources: 200,
     },
 
     seasons: {
-      /** Durée d'une saison en ticks (300 ticks de 2 s = 10 minutes). Une année = 4 saisons. */
-      lengthTicks: 300,
+      /** Durée d'une saison en ticks (3000 ticks de 0,2 s = 10 minutes). Une année = 4 saisons. */
+      lengthTicks: 3000,
       names: ['Printemps', 'Été', 'Automne', 'Hiver'],
       /** Multiplicateur de récolte par saison (hors tropiques). */
-      foodFactor: [1.0, 1.25, 0.85, 0.35],
+      foodFactor: [1.0, 1.25, 0.85, 0.2],
       /** Latitude sous laquelle il n'y a pas d'hiver (tropiques). */
       tropicsLatitude: 23,
     },
 
     victory: {
       /** Part des cases de terre ferme à contrôler pour gagner. */
-      landShare: 0.2,
+      landShare: 0.3,
     },
 
     ai: {
       count: 5,
       /** Les IA réfléchissent tous les N ticks. */
-      thinkEvery: 3,
+      thinkEvery: 5,
       /** Marge de sécurité : force envoyée / force nécessaire. */
       attackMargin: 1.35,
       /** Fourmiz gardées en défense sur chaque case. */
@@ -105,12 +136,32 @@
     online: {
       gameId: 'monde',
       /** Si le serveur a pris du retard, il rattrape au plus N ticks d'un coup (le reste du temps est sauté). */
-      maxCatchUpTicks: 900,
+      maxCatchUpTicks: 9000,
       /** Colonies IA présentes dans chaque nouveau monde en ligne. */
       aiCount: 4,
       /** Après une victoire, un nouveau monde naît au bout de N minutes. */
       resetAfterMinutes: 60,
       maxNameLength: 24,
+    },
+
+    /**
+     * Évolutions : améliorations permanentes de la colonie, achetées avec de la nourriture.
+     * Coût du niveau n = cost × costGrowth^(n-1). effect = valeur ajoutée par niveau.
+     */
+    evolutions: {
+      costGrowth: 2.5,
+      maxLevel: 3,
+      list: {
+        harvest:   { branch: 'Récolte', icon: '🍯', name: 'Mandibules de récolte', cost: 150, effect: 0.15, text: '+15 % de récolte' },
+        granary:   { branch: 'Récolte', icon: '🏺', name: 'Greniers', cost: 120, effect: 0.5, text: '+50 % de stockage, −35 % de pertes en hiver' },
+        fungus:    { branch: 'Récolte', icon: '🍄', name: 'Champignonnière', cost: 200, effect: 0.15, text: 'Récolte d’hiver +15 points' },
+        jaws:      { branch: 'Guerre', icon: '🦷', name: 'Mâchoires', cost: 180, effect: 0.15, text: '+15 % d’attaque' },
+        shell:     { branch: 'Guerre', icon: '🛡️', name: 'Carapace', cost: 180, effect: 0.15, text: '+15 % de défense' },
+        acid:      { branch: 'Guerre', icon: '🧪', name: 'Acide formique', cost: 300, effect: 1, text: 'Soldates +1 de force' },
+        fertility: { branch: 'Colonie', icon: '🥚', name: 'Fécondité', cost: 200, effect: 0.2, text: '+20 % de ponte' },
+        trails:    { branch: 'Colonie', icon: '🧭', name: 'Phéromones de piste', cost: 150, effect: 5, text: 'Logistique : +5 cases de portée' },
+        tunnels:   { branch: 'Colonie', icon: '🕳️', name: 'Galeries', cost: 150, effect: 0.2, text: 'Trajets 20 % plus rapides' },
+      },
     },
 
     colors: {

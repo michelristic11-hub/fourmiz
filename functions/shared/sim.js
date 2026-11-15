@@ -1,9 +1,11 @@
 /**
  * Fourmiz — simulation pure (aucun accès au DOM ni à la carte), partagée par le navigateur et le serveur.
  *
- * L'état de jeu est un objet JSON sérialisable : il peut être sauvegardé tel quel,
- * et ce même code pourra tourner côté serveur (Cloud Functions Firebase) pour arbitrer
- * les parties multijoueurs.
+ * L'état de jeu est un objet JSON sérialisable : il est sauvegardé tel quel (navigateur en solo,
+ * Realtime Database en ligne) et le serveur utilise ce même code pour arbitrer les parties.
+ *
+ * Fourmiz : trois castes, comptées séparément sur chaque case et dans chaque trajet.
+ *   w = ouvrières (récoltent), s = soldates (combattent), e = éclaireuses (rapides).
  *
  * Interface « world » attendue :
  *   world.ids                 : tableau des identifiants de cases (terre ferme)
@@ -13,6 +15,8 @@
  */
 (function (root) {
   'use strict';
+
+  const CASTES = ['w', 's', 'e'];
 
   // ---------- Hasard reproductible ----------
 
@@ -34,6 +38,41 @@
     return ((h >>> 0) % 100000) / 100000;
   }
 
+  // ---------- Groupes de fourmiz (castes) ----------
+
+  /** Nombre total de fourmiz d'une case ou d'un trajet. */
+  function total(g) { return (g.w || 0) + (g.s || 0) + (g.e || 0); }
+
+  /** Force de combat brute d'un groupe. */
+  function power(g, cfg, col) {
+    const acid = col ? evoLevel(col, 'acid') * cfg.evolutions.list.acid.effect : 0;
+    return (g.w || 0) * cfg.castes.w.power + (g.s || 0) * (cfg.castes.s.power + acid) + (g.e || 0) * cfg.castes.e.power;
+  }
+
+  /** Multiplie chaque caste d'un groupe (arrondi vers le bas, au moins 1 fourmi si min1). */
+  function scaleGroup(g, f, min1) {
+    const out = { w: Math.floor((g.w || 0) * f), s: Math.floor((g.s || 0) * f), e: Math.floor((g.e || 0) * f) };
+    if (min1 && total(out) === 0) {
+      const best = CASTES.slice().sort((a, b) => (g[b] || 0) - (g[a] || 0))[0];
+      out[best] = 1;
+    }
+    return out;
+  }
+
+  /**
+   * Prend une part des fourmiz d'une case : caste = 'all' | 'w' | 's' | 'e', share entre 0 et 1.
+   * @returns {{w:number, s:number, e:number}}
+   */
+  function pickGroup(cell, caste, share) {
+    const g = { w: 0, s: 0, e: 0 };
+    const keys = caste && caste !== 'all' ? [caste] : CASTES;
+    for (const k of keys) g[k] = Math.floor((cell[k] || 0) * share);
+    if (total(g) === 0) {
+      for (const k of keys) if ((cell[k] || 0) > 0) { g[k] = 1; break; }
+    }
+    return g;
+  }
+
   // ---------- Accès aux cases ----------
 
   /** Garnison d'insectes sauvages d'une case neutre jamais touchée. */
@@ -46,13 +85,44 @@
   function getCell(state, world, cfg, id) {
     const c = state.cells[id];
     if (c) return c;
-    return { owner: -1, ants: wildGarrison(world, cfg, id) };
+    return { owner: -1, w: wildGarrison(world, cfg, id), s: 0, e: 0 };
   }
 
   /** Renvoie l'état modifiable d'une case (le crée si besoin). */
   function cellRef(state, world, cfg, id) {
-    if (!state.cells[id]) state.cells[id] = { owner: -1, ants: wildGarrison(world, cfg, id) };
+    if (!state.cells[id]) state.cells[id] = { owner: -1, w: wildGarrison(world, cfg, id), s: 0, e: 0 };
     return state.cells[id];
+  }
+
+  function owns(state, colonyId, id) {
+    const c = state.cells[id];
+    return !!c && c.owner === colonyId;
+  }
+
+  // ---------- Évolutions ----------
+
+  function evoLevel(col, key) { return (col.evo && col.evo[key]) || 0; }
+
+  /** Coût du prochain niveau d'une évolution (ou null si déjà au maximum). */
+  function evoCost(cfg, col, key) {
+    const e = cfg.evolutions.list[key];
+    const lvl = evoLevel(col, key);
+    if (!e || lvl >= cfg.evolutions.maxLevel) return null;
+    return Math.round(e.cost * Math.pow(cfg.evolutions.costGrowth, lvl));
+  }
+
+  /** Achète le niveau suivant d'une évolution. */
+  function evolve(state, cfg, colonyId, key) {
+    const col = state.colonies[colonyId];
+    if (!cfg.evolutions.list[key]) return { ok: false, reason: 'Évolution inconnue.' };
+    const cost = evoCost(cfg, col, key);
+    if (cost == null) return { ok: false, reason: 'Niveau maximum atteint.' };
+    if (col.food < cost) return { ok: false, reason: `Il faut ${cost} de nourriture.` };
+    col.food -= cost;
+    col.evo = col.evo || {};
+    col.evo[key] = evoLevel(col, key) + 1;
+    if (!col.isAI) addLog(state, `${col.name} évolue : ${cfg.evolutions.list[key].name} niveau ${col.evo[key]}.`, colonyId);
+    return { ok: true };
   }
 
   // ---------- Saisons ----------
@@ -70,6 +140,47 @@
     return { index, name: s.names[index], factor: tropical ? 1 : s.foodFactor[index], tropical, year };
   }
 
+  /** Facteur de saison pour une colonie (la champignonnière adoucit l'hiver). */
+  function seasonFactor(state, cfg, col, lat) {
+    const s = seasonAt(state.tick, lat, cfg);
+    if (s.tropical || s.index !== 3) return s.factor;
+    return Math.min(1, s.factor + evoLevel(col, 'fungus') * cfg.evolutions.list.fungus.effect);
+  }
+
+  // ---------- Récolte (micro-gestion) ----------
+
+  /** Nombre idéal d'ouvrières sur une case. */
+  function optimalWorkers(world, cfg, id) {
+    return Math.max(1, Math.round(cfg.biomes[world.cells[id].biome].food * cfg.food.optimalWorkersPerFood));
+  }
+
+  /** Efficacité de récolte selon le nombre d'ouvrières (1 = idéal). */
+  function workEfficiency(cfg, w, opt) {
+    if (w <= 0) return 0;
+    if (w <= opt) return w / opt;
+    return 1 + cfg.food.overcrowdBonus * Math.log(w / opt);
+  }
+
+  /** Facteur logistique : plus une case est loin du nid, moins elle rapporte. */
+  function logistics(world, cfg, col, id) {
+    if (!col.nest || !world.cells[col.nest]) return 0.5;
+    const d = world.distance(col.nest, id);
+    const range = cfg.food.logisticsRange + evoLevel(col, 'trails') * cfg.evolutions.list.trails.effect;
+    return 1 / (1 + Math.max(0, d - cfg.food.logisticsFree) / range);
+  }
+
+  /** Détail de la récolte d'une case de colonie (pour la simulation et l'interface). */
+  function harvestInfo(state, world, cfg, col, id) {
+    const c = state.cells[id];
+    const cell = world.cells[id];
+    const opt = optimalWorkers(world, cfg, id);
+    const eff = workEfficiency(cfg, c.w || 0, opt);
+    const logi = logistics(world, cfg, col, id);
+    const season = seasonFactor(state, cfg, col, cell.lat);
+    const bonus = 1 + evoLevel(col, 'harvest') * cfg.evolutions.list.harvest.effect;
+    return { opt, eff, logi, season, food: cfg.biomes[cell.biome].food * eff * logi * season * bonus };
+  }
+
   // ---------- Création du monde ----------
 
   /**
@@ -81,7 +192,7 @@
     opts = opts || {};
     const seed = (opts.seed >>> 0) || ((Math.random() * 2 ** 32) >>> 0);
     const state = {
-      version: 2,
+      version: 3,
       era: opts.era || 1,
       seed,
       rng: seed,
@@ -105,8 +216,8 @@
   }
 
   /**
-   * Remet en forme un état relu depuis la base de données
-   * (Firebase supprime les tableaux et objets vides).
+   * Remet en forme un état relu depuis la base de données (Firebase supprime les tableaux
+   * et objets vides) et met à niveau les mondes des versions précédentes.
    */
   function hydrate(state) {
     if (!state) return state;
@@ -118,14 +229,25 @@
       if (col.nest === undefined) col.nest = null;
       col.stats = col.stats || {};
       if (col.uid === undefined) col.uid = null;
+      col.evo = col.evo || {};
+      col.caste = col.caste || 'balanced';
+      col.layAcc = col.layAcc || { w: 0, s: 0, e: 0 };
+    }
+    for (const id in state.cells) {
+      const c = state.cells[id];
+      if ('ants' in c) { c.w = (c.w || 0) + c.ants; delete c.ants; } // version 2 : une seule caste
+      c.w = c.w || 0; c.s = c.s || 0; c.e = c.e || 0;
     }
     for (const m of state.moves) {
+      if ('ants' in m) { m.w = (m.w || 0) + m.ants; delete m.ants; }
+      m.w = m.w || 0; m.s = m.s || 0; m.e = m.e || 0;
       if (!m.path) m.path = [m.from, m.to];
       if (!m.legs) m.legs = [0, m.arrive - m.depart];
       m.path = toArray(m.path);
       m.legs = toArray(m.legs);
     }
     if (state.winner == null) state.winner = -1;
+    state.version = 3;
     return state;
   }
 
@@ -151,10 +273,18 @@
       queenAlive: true,
       nest: null,
       layMode: 'normal',
+      caste: 'balanced',
       layProgress: 0,
+      layAcc: { w: 0, s: 0, e: 0 },
+      evo: {},
       alive: true,
-      stats: { territories: 0, ants: 0, income: 0, upkeep: 0, layCost: 0, net: 0, cap: 0 },
+      stats: {},
     };
+  }
+
+  function startGarrison(cfg) {
+    const g = cfg.start.startCastes;
+    return { w: g.w, s: g.s, e: g.e };
   }
 
   function addLog(state, text, colony) {
@@ -203,7 +333,7 @@
     const col = newColony(state.colonies.length, name, palette[humans % palette.length], false, cfg, who.uid);
     col.nest = id;
     state.colonies.push(col);
-    state.cells[id] = { owner: col.id, ants: cfg.start.ants };
+    state.cells[id] = Object.assign({ owner: col.id }, startGarrison(cfg));
     addLog(state, `${col.name} fonde sa colonie.`, col.id);
     refreshStats(state, world, cfg);
     return { ok: true, colony: col };
@@ -238,7 +368,7 @@
       const col = newColony(idx, cfg.ai.names[k % cfg.ai.names.length], cfg.colors.ai[k % cfg.colors.ai.length], true, cfg);
       col.nest = chosen;
       state.colonies.push(col);
-      state.cells[chosen] = { owner: idx, ants: cfg.start.ants };
+      state.cells[chosen] = Object.assign({ owner: idx }, startGarrison(cfg));
       taken.push(chosen);
     }
   }
@@ -246,7 +376,7 @@
   /**
    * Applique l'ordre d'un joueur. C'est la seule porte d'entrée pour les joueurs :
    * le serveur l'utilise pour valider tout ce que les navigateurs envoient.
-   * @param {object} order { uid, type: 'join'|'send'|'lay'|'queen'|'rally', ... }
+   * @param {object} order { uid, type: 'join'|'send'|'lay'|'caste'|'queen'|'rally'|'evolve', ... }
    * @returns {{ok:boolean, reason?:string}}
    */
   function applyOrder(state, world, cfg, order) {
@@ -255,31 +385,45 @@
     const col = colonyOf(state, order.uid);
     if (!col) return { ok: false, reason: 'Tu n’as pas de colonie dans ce monde.' };
     let r;
-    if (order.type === 'send') r = sendAnts(state, world, cfg, col.id, String(order.from), String(order.to), Number(order.ants) || 0);
-    else if (order.type === 'lay') r = setLayMode(state, cfg, col.id, String(order.mode));
+    if (order.type === 'send') {
+      let g;
+      if (order.ants != null && order.w == null) {
+        // Ancien format : un nombre total, réparti proportionnellement
+        const c = state.cells[String(order.from)];
+        g = c ? scaleGroup(c, Math.min(1, (Number(order.ants) || 0) / Math.max(1, total(c))), true) : { w: 0, s: 0, e: 0 };
+      } else {
+        g = { w: Number(order.w) || 0, s: Number(order.s) || 0, e: Number(order.e) || 0 };
+      }
+      r = sendAnts(state, world, cfg, col.id, String(order.from), String(order.to), g);
+    } else if (order.type === 'lay') r = setLayMode(state, cfg, col.id, String(order.mode));
+    else if (order.type === 'caste') r = setCaste(state, cfg, col.id, String(order.preset));
     else if (order.type === 'queen') r = raiseQueen(state, world, cfg, col.id, String(order.cell));
     else if (order.type === 'rally') r = rally(state, world, cfg, col.id, String(order.cell));
+    else if (order.type === 'evolve') r = evolve(state, cfg, col.id, String(order.key));
     else return { ok: false, reason: 'Ordre inconnu.' };
     refreshStats(state, world, cfg);
     return r;
   }
 
-  // ---------- Actions des joueurs ----------
+  // ---------- Déplacements ----------
 
-  /** Durée d'un pas vers une case (dépend du terrain d'arrivée ; plus rapide dans ses galeries). */
-  function stepTicks(world, cfg, to, tunnel) {
-    const t = cfg.movement.baseTravelTicks * cfg.biomes[world.cells[to].biome].travel * (tunnel ? cfg.movement.tunnelFactor : 1);
+  /** Durée d'un pas vers une case (terrain d'arrivée, galeries, évolution « Galeries »). */
+  function stepTicks(world, cfg, to, tunnel, col) {
+    let t = cfg.movement.baseTravelTicks * cfg.biomes[world.cells[to].biome].travel * (tunnel ? cfg.movement.tunnelFactor : 1);
+    if (col) t *= Math.max(0.2, 1 - evoLevel(col, 'tunnels') * cfg.evolutions.list.tunnels.effect);
     return Math.max(1, Math.round(t));
   }
 
   /** Durée d'un trajet direct vers une case voisine. */
   function travelTicks(world, cfg, to) {
-    return stepTicks(world, cfg, to, false);
+    return stepTicks(world, cfg, to, false, null);
   }
 
-  function owns(state, colonyId, id) {
-    const c = state.cells[id];
-    return !!c && c.owner === colonyId;
+  /** Vitesse d'un groupe : celle de sa caste la plus lente. */
+  function groupSpeed(cfg, g) {
+    let sp = 0;
+    for (const k of CASTES) if ((g[k] || 0) > 0) sp = Math.max(sp, cfg.castes[k].speed);
+    return sp || 1;
   }
 
   /**
@@ -317,21 +461,24 @@
   }
 
   /** Durées cumulées (en ticks) pour atteindre chaque case d'un chemin. */
-  function pathLegs(state, world, cfg, colonyId, path) {
+  function pathLegs(state, world, cfg, colonyId, path, g) {
+    const col = state.colonies[colonyId];
+    const speed = g ? groupSpeed(cfg, g) : 1;
     const legs = [0];
     for (let i = 1; i < path.length; i++) {
       const tunnel = owns(state, colonyId, path[i]);
-      legs.push(legs[i - 1] + stepTicks(world, cfg, path[i], tunnel));
+      legs.push(legs[i - 1] + Math.max(1, Math.round(stepTicks(world, cfg, path[i], tunnel, col) * speed)));
     }
     return legs;
   }
 
-  function launch(state, world, cfg, colonyId, path, n) {
+  function launch(state, world, cfg, colonyId, path, g) {
     const src = state.cells[path[0]];
-    src.ants -= n;
-    const legs = pathLegs(state, world, cfg, colonyId, path);
+    for (const k of CASTES) src[k] -= g[k] || 0;
+    const legs = pathLegs(state, world, cfg, colonyId, path, g);
     const move = {
-      id: state.nextMoveId++, owner: colonyId, from: path[0], to: path[path.length - 1], ants: n,
+      id: state.nextMoveId++, owner: colonyId, from: path[0], to: path[path.length - 1],
+      w: g.w || 0, s: g.s || 0, e: g.e || 0,
       depart: state.tick, arrive: state.tick + legs[legs.length - 1], path, legs,
     };
     state.moves.push(move);
@@ -339,32 +486,31 @@
   }
 
   /**
-   * Envoie n fourmiz d'une case vers une autre : une voisine, ou n'importe quelle case
-   * atteignable par ses galeries (renfort lointain, attaque à la frontière).
+   * Envoie un groupe de fourmiz { w, s, e } d'une case vers une autre : une voisine, ou n'importe quelle
+   * case atteignable par ses galeries (renfort lointain, attaque à la frontière).
    * @returns {{ok:boolean, reason?:string, move?:object}}
    */
-  function sendAnts(state, world, cfg, colonyId, from, to, n) {
+  function sendAnts(state, world, cfg, colonyId, from, to, g) {
     if (state.phase !== 'playing') return { ok: false, reason: 'La partie n’est pas en cours.' };
     const src = state.cells[from];
     if (!src || src.owner !== colonyId) return { ok: false, reason: 'Cette case ne t’appartient pas.' };
-    n = Math.floor(Math.min(n, src.ants));
-    if (n < 1) return { ok: false, reason: 'Pas assez de fourmiz.' };
+    const grp = {};
+    for (const k of CASTES) grp[k] = Math.max(0, Math.min(src[k] || 0, Math.floor(Number(g[k]) || 0)));
+    if (total(grp) < 1) return { ok: false, reason: 'Pas assez de fourmiz.' };
     const p = findPath(state, world, cfg, colonyId, from, to);
     if (!p.ok) return p;
-    return { ok: true, move: launch(state, world, cfg, colonyId, p.path, n) };
+    return { ok: true, move: launch(state, world, cfg, colonyId, p.path, grp) };
   }
 
   /**
    * « Rassembler ici » : chaque case de la colonie envoie ses fourmiz en trop vers la case choisie,
-   * par les galeries (en gardant de quoi récolter). Les plus grosses réserves partent en premier.
+   * par les galeries. Elle garde ses ouvrières utiles (jusqu'au nombre idéal) pour continuer à récolter.
    * @returns {{ok:boolean, reason?:string, count?:number, ants?:number}}
    */
   function rally(state, world, cfg, colonyId, target) {
     if (state.phase !== 'playing') return { ok: false, reason: 'La partie n’est pas en cours.' };
     if (!owns(state, colonyId, target)) return { ok: false, reason: 'Choisis une de tes cases.' };
-    const keep = cfg.movement.rallyKeep;
     const max = cfg.movement.maxPathLength;
-    // Parcours depuis la cible : prev[x] = case suivante vers la cible
     const next = { [target]: null };
     const depth = { [target]: 0 };
     const queue = [target];
@@ -378,26 +524,37 @@
         queue.push(nb);
       }
     }
-    const sources = queue.slice(1).filter((id) => state.cells[id].ants > keep)
-      .sort((a, b) => state.cells[b].ants - state.cells[a].ants)
+    const spare = (id) => {
+      const c = state.cells[id];
+      const keepW = Math.min(c.w, Math.max(cfg.movement.rallyKeep, optimalWorkers(world, cfg, id)));
+      return { w: c.w - keepW, s: c.s, e: c.e };
+    };
+    const sources = queue.slice(1).map((id) => ({ id, g: spare(id) })).filter((x) => total(x.g) > 0)
+      .sort((a, b) => total(b.g) - total(a.g))
       .slice(0, cfg.movement.rallyMaxSources);
-    let count = 0, total = 0;
-    for (const id of sources) {
+    let count = 0, sent = 0;
+    for (const { id, g } of sources) {
       const path = [];
       for (let x = id; x != null; x = next[x]) path.push(x);
-      const n = state.cells[id].ants - keep;
-      launch(state, world, cfg, colonyId, path, n);
+      launch(state, world, cfg, colonyId, path, g);
       count++;
-      total += n;
+      sent += total(g);
     }
-    if (!count) return { ok: false, reason: 'Aucune fourmi à rassembler.' };
-    return { ok: true, count, ants: total };
+    if (!count) return { ok: false, reason: 'Aucune fourmi en trop à rassembler.' };
+    return { ok: true, count, ants: sent };
   }
 
   /** Change le mode de ponte de la reine (stop / normal / intense). */
   function setLayMode(state, cfg, colonyId, mode) {
     if (!cfg.queen.layModes[mode]) return { ok: false, reason: 'Mode inconnu.' };
     state.colonies[colonyId].layMode = mode;
+    return { ok: true };
+  }
+
+  /** Change la répartition des castes pondues. */
+  function setCaste(state, cfg, colonyId, preset) {
+    if (!cfg.castePresets[preset]) return { ok: false, reason: 'Répartition inconnue.' };
+    state.colonies[colonyId].caste = preset;
     return { ok: true };
   }
 
@@ -408,7 +565,7 @@
     const req = cfg.queen.newQueen;
     if (col.queenAlive) return { ok: false, reason: 'Ta reine est toujours en vie.' };
     if (!c || c.owner !== colonyId) return { ok: false, reason: 'Choisis une de tes cases.' };
-    if (c.ants < req.minAnts) return { ok: false, reason: `Il faut ${req.minAnts} fourmiz sur la case.` };
+    if (total(c) < req.minAnts) return { ok: false, reason: `Il faut ${req.minAnts} fourmiz sur la case.` };
     if (col.food < req.food) return { ok: false, reason: `Il faut ${req.food} de nourriture.` };
     col.food -= req.food;
     col.queenAlive = true;
@@ -417,51 +574,93 @@
     return { ok: true };
   }
 
-  // ---------- Combat ----------
+  // ---------- Combat (micro-gestion tactique) ----------
 
-  /** Multiplicateur de défense d'une case. */
+  /** Multiplicateur de défense d'une case (biome, nid, proximité du nid, carapace). */
   function defenseFactor(state, world, cfg, id, owner) {
     const biome = cfg.biomes[world.cells[id].biome];
     if (owner < 0) return biome.defense;
     const col = state.colonies[owner];
-    const nest = col.queenAlive && col.nest === id ? cfg.combat.nestBonus : 1;
-    return cfg.combat.defenderBonus * biome.defense * nest;
+    let f = cfg.combat.defenderBonus * biome.defense;
+    if (col.queenAlive && col.nest === id) f *= cfg.combat.nestBonus;
+    else if (col.queenAlive && col.nest && world.distance(col.nest, id) <= cfg.combat.nestAreaRadius + 0.5) f *= cfg.combat.nestAreaBonus;
+    f *= 1 + evoLevel(col, 'shell') * cfg.evolutions.list.shell.effect;
+    return f;
+  }
+
+  /** Nombre de cases de l'attaquant qui touchent la cible. */
+  function encircling(state, world, colonyId, id) {
+    let n = 0;
+    for (const nb of world.neighbors(id)) if (owns(state, colonyId, nb)) n++;
+    return n;
   }
 
   /**
-   * Résout un combat par la loi de Lanchester au carré.
-   * @returns {{attackerWins:boolean, survivors:number}}
+   * Multiplicateur d'attaque : mâchoires, encerclement, fatigue du trajet.
+   * @returns {{factor:number, encircle:number, fatigue:number, sides:number}}
    */
-  function resolveCombat(attackers, defenders, factor) {
-    const d = defenders * factor;
-    if (attackers > d) {
-      return { attackerWins: true, survivors: Math.max(1, Math.floor(Math.sqrt(attackers * attackers - d * d))) };
-    }
-    return { attackerWins: false, survivors: Math.floor(Math.sqrt(d * d - attackers * attackers) / factor) };
+  function attackFactor(state, world, cfg, colonyId, to, steps) {
+    const col = state.colonies[colonyId];
+    const c = cfg.combat;
+    const sides = encircling(state, world, colonyId, to);
+    const encircle = Math.min(c.encircleMax, 1 + c.encircleBonus * Math.max(0, sides - 1));
+    const fatigue = Math.max(c.fatigueMin, 1 - c.fatiguePerStep * Math.max(0, steps - c.fatigueFree));
+    const jaws = 1 + evoLevel(col, 'jaws') * cfg.evolutions.list.jaws.effect;
+    return { factor: jaws * encircle * fatigue, encircle, fatigue, sides };
   }
 
-  /** Estimation (pour l'IA et l'interface) des fourmiz nécessaires pour prendre une case. */
-  function forceNeeded(state, world, cfg, id) {
+  /**
+   * Résout un combat par la loi de Lanchester au carré, sur des forces.
+   * @returns {{attackerWins:boolean, ratio:number}} ratio = part des survivants du vainqueur
+   */
+  function resolveCombat(attack, defense) {
+    if (attack > defense) return { attackerWins: true, ratio: Math.sqrt(attack * attack - defense * defense) / attack };
+    if (defense <= 0) return { attackerWins: false, ratio: 0 };
+    return { attackerWins: false, ratio: Math.sqrt(defense * defense - attack * attack) / defense };
+  }
+
+  /** Force (pondérée) de la défense d'une case. */
+  function defensePower(state, world, cfg, id) {
     const c = getCell(state, world, cfg, id);
-    return Math.floor(c.ants * defenseFactor(state, world, cfg, id, c.owner)) + 1;
+    const col = c.owner >= 0 ? state.colonies[c.owner] : null;
+    return power(c, cfg, col) * defenseFactor(state, world, cfg, id, c.owner);
+  }
+
+  /** Estimation (pour l'IA et l'interface) de la force brute nécessaire pour prendre une case. */
+  function forceNeeded(state, world, cfg, id) {
+    return Math.floor(defensePower(state, world, cfg, id)) + 1;
+  }
+
+  /**
+   * Aperçu d'une attaque avant de l'envoyer : force de l'attaque (avec bonus) contre force de la défense.
+   * @returns {{attack:number, defense:number, win:boolean, encircle:number, fatigue:number, sides:number}}
+   */
+  function attackPreview(state, world, cfg, colonyId, path, g) {
+    const to = path[path.length - 1];
+    const f = attackFactor(state, world, cfg, colonyId, to, path.length - 1);
+    const attack = power(g, cfg, state.colonies[colonyId]) * f.factor;
+    const defense = defensePower(state, world, cfg, to);
+    return Object.assign({ attack, defense, win: attack > defense }, f);
   }
 
   function arrive(state, world, cfg, move) {
     const cell = cellRef(state, world, cfg, move.to);
     const atk = state.colonies[move.owner];
     if (cell.owner === move.owner) {
-      cell.ants += move.ants;
+      for (const k of CASTES) cell[k] += move[k] || 0;
       return;
     }
     const defOwner = cell.owner;
-    const factor = defenseFactor(state, world, cfg, move.to, defOwner);
-    const r = resolveCombat(move.ants, cell.ants, factor);
-    const defName = defOwner < 0 ? 'les insectes sauvages' : state.colonies[defOwner].name;
+    const def = defOwner >= 0 ? state.colonies[defOwner] : null;
+    const attack = power(move, cfg, atk) * attackFactor(state, world, cfg, move.owner, move.to, (move.path || [0, 0]).length - 1).factor;
+    const defense = power(cell, cfg, def) * defenseFactor(state, world, cfg, move.to, defOwner);
+    const r = resolveCombat(attack, defense);
+    const defName = defOwner < 0 ? 'les insectes sauvages' : def.name;
     if (r.attackerWins) {
+      const surv = scaleGroup(move, r.ratio, true);
       cell.owner = move.owner;
-      cell.ants = r.survivors;
-      if (defOwner >= 0) {
-        const def = state.colonies[defOwner];
+      cell.w = surv.w; cell.s = surv.s; cell.e = surv.e;
+      if (def) {
         if (def.nest === move.to && def.queenAlive) {
           def.queenAlive = false;
           def.nest = null;
@@ -471,41 +670,62 @@
         }
       }
     } else {
-      cell.ants = r.survivors;
-      if (!atk.isAI || (defOwner >= 0 && !state.colonies[defOwner].isAI)) {
-        addLog(state, `Attaque de ${atk.name} repoussée par ${defName}.`, defOwner >= 0 ? defOwner : move.owner);
+      const surv = scaleGroup(cell, r.ratio, false);
+      cell.w = surv.w; cell.s = surv.s; cell.e = surv.e;
+      if (!atk.isAI || (def && !def.isAI)) {
+        addLog(state, `Attaque de ${atk.name} repoussée par ${defName}.`, def ? defOwner : move.owner);
       }
     }
   }
 
   // ---------- Boucle de simulation ----------
 
-  /** Recalcule les statistiques de chaque colonie (territoires, fourmiz, revenus). */
+  /** Recalcule les statistiques de chaque colonie (territoires, castes, revenus, dépenses). */
   function refreshStats(state, world, cfg) {
+    const K = cfg.castes;
     for (const col of state.colonies) {
-      col.stats = { territories: 0, ants: 0, income: 0, upkeep: 0, layCost: 0, layRate: 0, net: 0, cap: 0 };
+      col.stats = { territories: 0, ants: 0, w: 0, s: 0, e: 0, power: 0, income: 0, upkeep: 0, layCost: 0, layRate: 0, spoil: 0, net: 0, cap: 0 };
     }
     for (const id in state.cells) {
       const c = state.cells[id];
       if (c.owner < 0) continue;
-      const s = state.colonies[c.owner].stats;
+      const col = state.colonies[c.owner];
+      const s = col.stats;
       s.territories++;
-      s.ants += c.ants;
-      if (c.ants >= cfg.food.minForagers) {
-        const cell = world.cells[id];
-        s.income += cfg.biomes[cell.biome].food * seasonAt(state.tick, cell.lat, cfg).factor;
-      }
+      s.w += c.w; s.s += c.s; s.e += c.e;
+      if (c.w > 0) s.income += harvestInfo(state, world, cfg, col, id).food;
     }
-    for (const m of state.moves) state.colonies[m.owner].stats.ants += m.ants;
+    for (const m of state.moves) {
+      const s = state.colonies[m.owner].stats;
+      s.w += m.w; s.s += m.s; s.e += m.e;
+    }
     for (const col of state.colonies) {
       const s = col.stats;
-      s.upkeep = s.ants * cfg.food.upkeepPerAnt;
-      s.cap = cfg.food.storageBase + cfg.food.storagePerTerritory * s.territories;
+      s.ants = s.w + s.s + s.e;
+      s.power = power(s, cfg, col);
+      s.upkeep = s.w * K.w.upkeep + s.s * K.s.upkeep + s.e * K.e.upkeep;
+      const granary = evoLevel(col, 'granary');
+      s.cap = (cfg.food.storageBase + cfg.food.storagePerTerritory * s.territories) * (1 + granary * cfg.evolutions.list.granary.effect);
       s.layRate = layRate(state, world, cfg, col);
-      const mode = cfg.queen.layModes[col.layMode];
-      s.layCost = s.layRate * cfg.queen.foodPerAnt * mode.cost;
-      s.net = s.income - s.upkeep - s.layCost;
+      s.layCost = s.layRate * eggCost(cfg, col) * cfg.queen.layModes[col.layMode].cost;
+      s.spoil = winterSpoil(state, world, cfg, col);
+      s.net = s.income - s.upkeep - s.layCost - s.spoil;
     }
+  }
+
+  /** Coût moyen d'un œuf selon la répartition des castes choisie. */
+  function eggCost(cfg, col) {
+    const mix = cfg.castePresets[col.caste || 'balanced'].mix;
+    return CASTES.reduce((t, k) => t + mix[k] * cfg.castes[k].cost, 0);
+  }
+
+  /** Nourriture qui se gâte en hiver (réduite par les greniers). */
+  function winterSpoil(state, world, cfg, col) {
+    if (!col.nest || !world.cells[col.nest]) return 0;
+    const s = seasonAt(state.tick, world.cells[col.nest].lat, cfg);
+    if (s.tropical || s.index !== 3) return 0;
+    const reduce = Math.pow(0.65, evoLevel(col, 'granary'));
+    return Math.max(0, col.food) * cfg.food.winterSpoil * reduce;
   }
 
   /** Fourmiz pondues par tick par la reine d'une colonie. */
@@ -514,9 +734,21 @@
     const q = cfg.queen;
     let rate = Math.min(q.maxLayRate, q.baseLayRate + q.layRatePerTerritory * col.stats.territories);
     rate *= q.layModes[col.layMode].rate;
+    rate *= 1 + evoLevel(col, 'fertility') * cfg.evolutions.list.fertility.effect;
     const season = seasonAt(state.tick, world.cells[col.nest].lat, cfg);
     if (!season.tropical && season.index === 3) rate *= q.winterLayFactor;
     return rate;
+  }
+
+  /** Choisit la caste du prochain œuf pour respecter la répartition demandée. */
+  function nextCaste(cfg, col) {
+    const mix = cfg.castePresets[col.caste || 'balanced'].mix;
+    const acc = col.layAcc || (col.layAcc = { w: 0, s: 0, e: 0 });
+    for (const k of CASTES) acc[k] += mix[k];
+    let best = 'w';
+    for (const k of CASTES) if (acc[k] > acc[best]) best = k;
+    acc[best] -= 1;
+    return best;
   }
 
   /** Avance la simulation d'un tick. */
@@ -538,36 +770,39 @@
     for (const col of state.colonies) {
       if (!col.alive) continue;
       const s = col.stats;
-      const mode = cfg.queen.layModes[col.layMode];
-      col.food += s.income - s.upkeep;
+      col.food += s.income - s.upkeep - s.spoil;
 
-      // Ponte : chaque fourmi coûte de la nourriture
+      // Ponte : chaque œuf coûte de la nourriture selon sa caste
       if (s.layRate > 0) {
+        const mode = cfg.queen.layModes[col.layMode];
         col.layProgress += s.layRate;
-        const unitCost = cfg.queen.foodPerAnt * mode.cost;
-        let born = 0;
-        while (col.layProgress >= 1 && col.food >= unitCost) {
+        while (col.layProgress >= 1) {
+          const k = nextCaste(cfg, col);
+          const cost = cfg.castes[k].cost * mode.cost;
+          if (col.food < cost) { col.layAcc[k] += 1; break; }
           col.layProgress -= 1;
-          col.food -= unitCost;
-          born++;
+          col.food -= cost;
+          state.cells[col.nest][k] += 1;
         }
         if (col.layProgress > 1) col.layProgress = 1; // pas de stock de ponte sans nourriture
-        if (born > 0) state.cells[col.nest].ants += born;
       }
 
-      // Famine
+      // Famine : les soldates meurent en premier (elles mangent le plus)
       if (col.food < 0) {
         col.food = 0;
         let dead = 0;
         for (const id in state.cells) {
           const c = state.cells[id];
-          if (c.owner !== col.id || c.ants <= 0) continue;
-          const exact = c.ants * cfg.food.starvationRate;
-          const loss = Math.min(c.ants, Math.floor(exact) + (rand(state) < exact - Math.floor(exact) ? 1 : 0));
-          c.ants -= loss;
-          dead += loss;
+          if (c.owner !== col.id) continue;
+          for (const k of ['s', 'e', 'w']) {
+            if (c[k] <= 0) continue;
+            const exact = c[k] * cfg.food.starvationRate;
+            const loss = Math.min(c[k], Math.floor(exact) + (rand(state) < exact - Math.floor(exact) ? 1 : 0));
+            c[k] -= loss;
+            dead += loss;
+          }
         }
-        if (dead > 0 && !col.isAI && state.tick % 10 === 0) addLog(state, `Famine chez ${col.name} !`, col.id);
+        if (dead > 0 && !col.isAI && state.tick % 50 === 0) addLog(state, `Famine chez ${col.name} !`, col.id);
       }
       col.food = Math.min(col.food, s.cap);
 
@@ -592,7 +827,7 @@
       col.alive = false;
       col.queenAlive = false;
       for (const id in state.cells) {
-        if (state.cells[id].owner === col.id) state.cells[id] = { owner: -1, ants: 0 };
+        if (state.cells[id].owner === col.id) state.cells[id] = { owner: -1, w: 0, s: 0, e: 0 };
       }
       state.moves = state.moves.filter((m) => m.owner !== col.id);
       addLog(state, `${col.name} a disparu.`, col.id);
@@ -613,9 +848,11 @@
   }
 
   const SIM = {
-    rand, hash01, getCell, seasonAt, createWorldState, hydrate, joinColony, canFound,
-    colonyOf, applyOrder, sendAnts, rally, findPath, pathLegs, tickMs, tickAt, setLayMode, raiseQueen, resolveCombat, forceNeeded, defenseFactor,
-    travelTicks, refreshStats, step, wildGarrison,
+    CASTES, rand, hash01, total, power, scaleGroup, pickGroup, getCell, seasonAt, createWorldState, hydrate,
+    joinColony, canFound, colonyOf, applyOrder, sendAnts, rally, findPath, pathLegs, groupSpeed, tickMs, tickAt,
+    setLayMode, setCaste, raiseQueen, evolve, evoLevel, evoCost, resolveCombat, forceNeeded, defenseFactor,
+    defensePower, attackFactor, attackPreview, optimalWorkers, harvestInfo, logistics, travelTicks, refreshStats,
+    step, wildGarrison, eggCost,
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = SIM;

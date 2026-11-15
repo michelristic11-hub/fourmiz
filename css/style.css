@@ -103,6 +103,18 @@ body.mode-solo .online-only, body.mode-online .solo-only { display: none !import
 .primary:disabled, .secondary:disabled { opacity: .5; cursor: not-allowed; }
 .icon { border: 0; background: none; font-size: 16px; width: 36px; height: 36px; border-radius: 8px; flex: none; }
 .icon:hover { background: var(--line); }
+.castes { font-size: 13px; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.evo-branch { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 10px 0 4px; }
+.evo-branch:first-child { margin-top: 0; }
+.evo { display: flex; align-items: center; gap: 8px; padding: 5px 0; }
+.evo-icon { font-size: 20px; width: 26px; text-align: center; flex: none; }
+.evo-text { flex: 1; min-width: 0; font-size: 13px; }
+.evo-text .hint { font-size: 11px; }
+.evo-buy { min-height: 32px; padding: 6px 10px; font-variant-numeric: tabular-nums; flex: none; }
+.evo-buy:not(:disabled) { background: var(--accent); color: var(--accent-ink); }
+.pip { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--line); margin-left: 2px; vertical-align: middle; }
+.pip.on { background: var(--accent); }
+#send-caste button { font-size: 12px; }
 .tips { margin: 0; padding-left: 18px; font-size: 13px; display: grid; gap: 4px; }
 .kv { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; }
 #ranking, #legend-list, #log { margin: 0; padding: 0; list-style: none; }
@@ -140,7 +152,7 @@ body.mode-solo .online-only, body.mode-online .solo-only { display: none !import
 }
 #hover { min-width: 150px; }
 #hover .title { font-weight: 700; margin-bottom: 2px; display: flex; gap: 6px; align-items: center; }
-#dragtip { font-size: 13px; font-weight: 600; white-space: nowrap; }
+#dragtip { font-size: 13px; font-weight: 600; max-width: min(380px, calc(100vw - 16px)); }
 
 /* ---------- Bandeau de fondation ---------- */
 #placement {
@@ -168,8 +180,8 @@ body.mode-solo .online-only, body.mode-online .solo-only { display: none !import
   .top-right { margin-left: auto; }
   .ghost, .pill { font-size: 13px; padding: 6px 10px; }
   #mode-link { display: none; }
-  #mapbtns { top: 104px; right: 8px; }
-  #mapbtns button { width: 46px; height: 46px; }
+  #mapbtns { top: 56px; left: 8px; right: auto; flex-direction: row; }
+  #mapbtns button { width: 42px; height: 42px; font-size: 18px; }
   .maplibregl-ctrl-bottom-right { display: none; }
 
   #panel {
@@ -193,5 +205,5 @@ body.mode-solo .online-only, body.mode-online .solo-only { display: none !import
   }
   .seg button { min-height: 42px; font-size: 14px; }
   body.panel-open #actionbar, body.panel-open #placement, body.panel-open #mapbtns { display: none !important; }
-  #toast { top: 104px !important; }
+  #toast { top: 104px !important; left: 8px !important; right: 64px; transform: none !important; max-width: none !important; }
 }

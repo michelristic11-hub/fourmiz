@@ -92,7 +92,7 @@
     }, firstSymbol);
     map.addLayer({
       id: 'cells-border', type: 'line', source: 'cells',
-      paint: { 'line-color': '#000', 'line-width': ['case', owned, ['interpolate', ['linear'], ['zoom'], 1, 0.6, 5, 2], 0], 'line-opacity': 0.9 },
+      paint: { 'line-color': '#000', 'line-width': ['interpolate', ['linear'], ['zoom'], 1, ['case', owned, 0.6, 0], 5, ['case', owned, 2, 0]], 'line-opacity': 0.9 },
     }, firstSymbol);
     map.addLayer({
       id: 'cells-hl', type: 'line', source: 'cells',
@@ -259,7 +259,7 @@
             now[id] = c.owner;
             armies.push({
               type: 'Feature',
-              properties: { n: c.ants, c: state.colonies[c.owner].color, me: c.owner === meId },
+              properties: { n: (c.w || 0) + (c.s || 0) + (c.e || 0), c: state.colonies[c.owner].color, me: c.owner === meId },
               geometry: { type: 'Point', coordinates: center(id) },
             });
           }
@@ -293,7 +293,7 @@
           const a = pts[i - 1], b = pts[i];
           const color = state.colonies[m.owner].color;
           mv.push({ type: 'Feature', properties: { c: color }, geometry: { type: 'LineString', coordinates: pts } });
-          mv.push({ type: 'Feature', properties: { c: color, n: m.ants }, geometry: { type: 'Point', coordinates: [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f] } });
+          mv.push({ type: 'Feature', properties: { c: color, n: (m.w || 0) + (m.s || 0) + (m.e || 0) }, geometry: { type: 'Point', coordinates: [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f] } });
         }
         map.getSource('moves').setData({ type: 'FeatureCollection', features: mv });
       },

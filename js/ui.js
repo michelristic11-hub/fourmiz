@@ -10,6 +10,15 @@
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const isPhone = () => window.matchMedia('(max-width: 720px)').matches;
 
+  function castesMix(mix) {
+    return `${Math.round(mix.w * 100)} % ouvrières, ${Math.round(mix.s * 100)} % soldates, ${Math.round(mix.e * 100)} % éclaireuses`;
+  }
+
+  /** « 🐜 12 · ⚔️ 4 · 💨 1 » pour un groupe de fourmiz. */
+  function castesLine(g, cfg) {
+    return ['w', 's', 'e'].filter((k) => (g[k] || 0) > 0).map((k) => `${cfg.castes[k].icon} ${fmt(g[k])}`).join(' · ') || '0';
+  }
+
   /** Durée lisible à partir d'un nombre de ticks. */
   function duration(ticks, cfg) {
     const s = Math.round(ticks * cfg.time.tickSeconds);
@@ -20,8 +29,8 @@
 
   /**
    * @param {object} cfg FZ.CONFIG
-   * @param {object} act { speed, newGame, layMode, share, raiseQueen, rally, closeSelection,
-   *                       overlayButton, userButton, goNest, goArmy, goAll }
+   * @param {object} act { speed, newGame, layMode, caste, evolve, share, sendCaste, raiseQueen, rally,
+   *                       closeSelection, overlayButton, userButton, goNest, goArmy, goAll }
    */
   function createUI(cfg, act) {
     const SIM = root.FZ.SIM;
@@ -30,7 +39,7 @@
     Object.assign(toast.style, {
       position: 'absolute', top: '64px', left: '50%', transform: 'translateX(-50%)', zIndex: 8,
       background: 'var(--ink)', color: 'var(--bg)', padding: '8px 14px', borderRadius: '8px',
-      boxShadow: 'var(--shadow)', fontSize: '13px', maxWidth: 'calc(100% - 32px)', textAlign: 'center',
+      boxShadow: 'var(--shadow)', fontSize: '13px', maxWidth: 'calc(100% - 32px)', textAlign: 'center', pointerEvents: 'none',
     });
     toast.hidden = true;
     document.body.appendChild(toast);
@@ -47,6 +56,14 @@
     segment('.speed', 'speed', (v) => act.speed(Number(v)));
     segment('#lay-modes', 'mode', (v) => act.layMode(v));
     segment('#send-share', 'share', (v) => act.share(Number(v)));
+    segment('#send-caste', 'caste', (v) => act.sendCaste(v));
+    $('#caste-presets').innerHTML = Object.keys(cfg.castePresets).map((k) =>
+      `<button data-preset="${k}" title="${castesMix(cfg.castePresets[k].mix)}">${esc(cfg.castePresets[k].label)}</button>`).join('');
+    segment('#caste-presets', 'preset', (v) => act.caste(v));
+    $('#evo-list').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-evo]');
+      if (b && !b.disabled) act.evolve(b.dataset.evo);
+    });
     $('#btn-new').addEventListener('click', () => { if (confirmNew()) act.newGame(); });
     $('#btn-queen').addEventListener('click', () => act.raiseQueen());
     $('#btn-rally').addEventListener('click', () => act.rally());
@@ -115,10 +132,33 @@
       const mine = me && owner && owner.id === me.id;
       const isNest = owner && owner.nest === id && owner.queenAlive;
       let html = `<div class="title">${owner ? `<span class="dot" style="background:${owner.color}"></span>${esc(owner.name)}` : 'Territoire sauvage'}${isNest ? ' · 👑 nid' : ''}</div>`;
-      html += `<div>${esc(b.name)} · <b>${fmt(c.ants)}</b> ${owner ? 'fourmiz' : 'insectes'}</div>`;
-      html += `<div class="hint">Récolte ${fmt(b.food * SIM.seasonAt(state.tick, cell.lat, cfg).factor, 2)} · défense x${fmt(SIM.defenseFactor(state, world, cfg, id, c.owner), 2)}</div>`;
-      if (state.phase === 'playing' && me && !mine) html += `<div>≈ <b>${fmt(SIM.forceNeeded(state, world, cfg, id))}</b> fourmiz pour la prendre</div>`;
+      html += `<div>${esc(b.name)} · ${owner ? castesLine(c, cfg) : `<b>${fmt(SIM.total(c))}</b> insectes`}</div>`;
+      if (mine) {
+        const h = SIM.harvestInfo(state, world, cfg, owner, id);
+        const perS = 1 / cfg.time.tickSeconds;
+        html += `<div class="hint">Ouvrières ${fmt(c.w)}/${h.opt} idéal · rendement ${fmt(Math.min(h.eff, 9) * 100)} % · logistique ${fmt(h.logi * 100)} % · <b>+${fmt(h.food * perS, 1)}/s</b></div>`;
+      } else {
+        html += `<div class="hint">Récolte ${fmt(b.food, 2)} · ${SIM.optimalWorkers(world, cfg, id)} ouvrières idéal · défense x${fmt(SIM.defenseFactor(state, world, cfg, id, c.owner), 2)}</div>`;
+        if (state.phase === 'playing' && me) html += `<div>Force de défense ≈ <b>${fmt(SIM.defensePower(state, world, cfg, id))}</b> <span class="hint">(ouvrière 1, soldate ${cfg.castes.s.power}, éclaireuse ${cfg.castes.e.power})</span></div>`;
+      }
       return html;
+    }
+
+    /** Liste des évolutions de la colonie. */
+    function renderEvos(me) {
+      const E = cfg.evolutions;
+      let html = '', branch = '';
+      for (const k in E.list) {
+        const e = E.list[k];
+        if (e.branch !== branch) { branch = e.branch; html += `<div class="evo-branch">${esc(branch)}</div>`; }
+        const lvl = SIM.evoLevel(me, k);
+        const cost = SIM.evoCost(cfg, me, k);
+        const pips = Array.from({ length: E.maxLevel }, (_, i) => `<span class="pip${i < lvl ? ' on' : ''}"></span>`).join('');
+        html += `<div class="evo"><span class="evo-icon">${e.icon}</span><div class="evo-text"><b>${esc(e.name)}</b> ${pips}<div class="hint">${esc(e.text)}</div></div>` +
+          (cost == null ? '<span class="hint">max</span>' : `<button class="secondary evo-buy" data-evo="${k}" ${me.food < cost ? 'disabled' : ''}>${fmt(cost)}</button>`) + '</div>';
+      }
+      const el = $('#evo-list');
+      if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; }
     }
 
     /**
@@ -140,6 +180,7 @@
       // Fonder une colonie / sa colonie
       $('#join').hidden = !!me;
       $('#colony').hidden = !me;
+      $('#evos').hidden = !me;
       $('#help').hidden = !me;
       $('#mapbtns').hidden = !me;
       if (!me) {
@@ -153,23 +194,27 @@
         $('#col-name').textContent = me.name;
         $('#st-ants').textContent = fmt(s.ants);
         $('#st-terr').textContent = fmt(s.territories);
+        $('#st-castes').innerHTML = `${castesLine(s, cfg)} <span class="hint">· force ${fmt(s.power)}</span>`;
         const net = s.net || 0;
-        const perMin = 60 / cfg.time.tickSeconds;
+        const perS = 1 / cfg.time.tickSeconds;
         $('#st-food-short').innerHTML = `${fmt(me.food)} <span class="${net >= 0 ? 'pos' : 'neg'}" style="font-size:12px">${net >= 0 ? '▲' : '▼'}</span>`;
         $('#st-queen').textContent = me.queenAlive ? '👑' : '💀 (morte)';
         $('#st-food').textContent = `${fmt(me.food)} / ${fmt(s.cap)}`;
         $('#food-bar').style.width = Math.min(100, (100 * me.food) / Math.max(1, s.cap)) + '%';
         $('#st-net').innerHTML =
-          `Par minute : +${fmt(s.income * perMin)} récolte · −${fmt(s.upkeep * perMin)} entretien · −${fmt(s.layCost * perMin)} ponte = ` +
-          `<span class="${net >= 0 ? 'pos' : 'neg'}">${net >= 0 ? '+' : ''}${fmt(net * perMin)}</span>` +
+          `Par seconde : +${fmt(s.income * perS, 1)} récolte · −${fmt(s.upkeep * perS, 1)} entretien · −${fmt(s.layCost * perS, 1)} ponte` +
+          (s.spoil > 0 ? ` · −${fmt(s.spoil * perS, 1)} gâté (hiver)` : '') +
+          ` = <span class="${net >= 0 ? 'pos' : 'neg'}">${net >= 0 ? '+' : ''}${fmt(net * perS, 1)}</span>` +
           (me.food <= 0 && net < 0 ? ' <span class="neg">FAMINE</span>' : '');
         document.querySelectorAll('#lay-modes button').forEach((b) => b.classList.toggle('on', b.dataset.mode === me.layMode));
-        let lay = me.queenAlive ? `≈ ${fmt(s.layRate * perMin)} fourmiz par minute au nid` : 'Pas de reine : aucune ponte. Choisis une case avec assez de fourmiz pour en élever une.';
+        document.querySelectorAll('#caste-presets button').forEach((b) => b.classList.toggle('on', b.dataset.preset === me.caste));
+        let lay = me.queenAlive ? `≈ ${fmt(s.layRate * perS, 1)} œufs par seconde au nid (${castesMix(cfg.castePresets[me.caste].mix)})` : 'Pas de reine : aucune ponte. Choisis une case avec assez de fourmiz pour en élever une.';
         if (me.queenAlive && me.nest) {
           const season = SIM.seasonAt(state.tick, world.cells[me.nest].lat, cfg);
           if (!season.tropical && season.index === 3) lay += ' (hiver : ponte ralentie)';
         }
         $('#lay-info').textContent = lay;
+        renderEvos(me);
       }
 
       // Barre d'action : case à soi choisie, ou simple fiche d'une autre case
@@ -183,7 +228,7 @@
           const c = state.cells[sel];
           const q = cfg.queen.newQueen;
           $('#btn-queen').hidden = me.queenAlive;
-          $('#btn-queen').disabled = !(c.ants >= q.minAnts && me.food >= q.food);
+          $('#btn-queen').disabled = !(SIM.total(c) >= q.minAnts && me.food >= q.food);
           $('#btn-queen').title = `${q.food} de nourriture et ${q.minAnts} fourmiz sur la case`;
         }
       }
@@ -195,7 +240,7 @@
       $('#ranking').innerHTML = rows.slice(0, 15).map((c) =>
         `<li class="${me && c.id === me.id ? 'me' : ''}"><span class="dot" style="background:${c.color}"></span>` +
         `<span class="name">${esc(c.name)}${c.isAI ? ' <span class="me-badge">IA</span>' : ''}${!c.queenAlive ? ' 💀' : ''}</span>` +
-        `<span>${fmt(c.stats.territories)} · ${fmt(c.stats.ants)}🐜</span></li>`).join('');
+        `<span title="force ${fmt(c.stats.power)}">${fmt(c.stats.territories)} · ${fmt(c.stats.ants)}🐜</span></li>`).join('');
 
       // Journal
       $('#log').innerHTML = state.log.slice(-30).reverse().map((l) => {
@@ -272,6 +317,7 @@
 
     return {
       update, hover, dragTip, say, overlay, hideOverlay, setUser, duration: (t) => duration(t, cfg),
+      castesLine: (g) => castesLine(g, cfg),
       joinName: () => $('#join-name').value.trim(),
     };
   }

@@ -1,10 +1,13 @@
 /**
  * Fourmiz — colonies rivales contrôlées par l'ordinateur.
- * Comportement simple : s'étendre vers les cases rentables et faibles,
- * acheminer les renforts de l'intérieur vers la frontière, gérer la ponte.
+ * Comportement simple mais complet : garder les ouvrières utiles sur chaque case, attaquer avec
+ * les soldates et le surplus vers les cases rentables et faibles, acheminer les renforts de
+ * l'intérieur vers la frontière, gérer la ponte, les castes et les évolutions.
  */
 (function (root) {
   'use strict';
+
+  const EVO_ORDER = ['harvest', 'fertility', 'jaws', 'granary', 'trails', 'shell', 'tunnels', 'fungus', 'acid'];
 
   /** Fait réfléchir toutes les IA (à appeler après SIM.step). */
   function thinkAll(state, world, cfg, SIM) {
@@ -12,7 +15,7 @@
     const owned = {};
     for (const id in state.cells) {
       const c = state.cells[id];
-      if (c.owner > 0) (owned[c.owner] = owned[c.owner] || []).push(id);
+      if (c.owner >= 0 && state.colonies[c.owner].isAI) (owned[c.owner] = owned[c.owner] || []).push(id);
     }
     const incoming = {};
     for (const m of state.moves) incoming[m.owner + ':' + m.to] = true;
@@ -23,14 +26,25 @@
 
   function think(state, world, cfg, SIM, col, cells, incoming) {
     const s = col.stats;
-    // Ponte
-    if (col.food < 15 && s.net < 0) col.layMode = 'stop';
+    // Ponte et castes
+    if (col.food < 20 && s.net < 0) col.layMode = 'stop';
     else if (col.food > s.cap * 0.6) col.layMode = 'intense';
     else col.layMode = 'normal';
+    col.caste = s.w < s.territories * 6 ? 'harvest' : 'balanced';
+
+    // Évolutions : la moins chère de la liste dès qu'on a de la marge
+    if (state.tick % (cfg.ai.thinkEvery * 20) === 0) {
+      let best = null, bestCost = Infinity;
+      for (const k of EVO_ORDER) {
+        const cost = SIM.evoCost(cfg, col, k);
+        if (cost != null && cost < bestCost) { best = k; bestCost = cost; }
+      }
+      if (best && col.food > bestCost * 1.5) SIM.evolve(state, cfg, col.id, best);
+    }
 
     // Reine morte : en élever une nouvelle si possible
     if (!col.queenAlive) {
-      const best = cells.slice().sort((a, b) => state.cells[b].ants - state.cells[a].ants)[0];
+      const best = cells.slice().sort((a, b) => SIM.total(state.cells[b]) - SIM.total(state.cells[a]))[0];
       if (best) SIM.raiseQueen(state, world, cfg, col.id, best);
     }
 
@@ -38,9 +52,12 @@
     for (const id of cells) {
       const c = state.cells[id];
       if (!c || c.owner !== col.id) continue;
-      const reserve = id === col.nest ? keep * 3 : keep;
-      let avail = c.ants - reserve;
-      if (avail < 2) continue;
+      // Fourmiz disponibles : on garde les ouvrières utiles et une petite garde
+      const opt = SIM.optimalWorkers(world, cfg, id);
+      const guard = id === col.nest ? keep * 3 : keep;
+      const avail = { w: Math.max(0, c.w - opt), s: Math.max(0, c.s - Math.ceil(guard / 3)), e: c.e };
+      const availPow = SIM.power(avail, cfg, col);
+      if (availPow < 2) continue;
 
       const nbs = world.neighbors(id);
       let best = null;
@@ -51,24 +68,25 @@
         if (t.owner === col.id) continue;
         frontier = true;
         if (incoming[col.id + ':' + nb]) continue;
-        const need = SIM.forceNeeded(state, world, cfg, nb);
-        const send = Math.ceil(need * cfg.ai.attackMargin);
-        if (send > avail) continue;
+        const prev = SIM.attackPreview(state, world, cfg, col.id, [id, nb], avail);
+        if (prev.attack < prev.defense * cfg.ai.attackMargin) continue;
+        // On n'envoie que la part nécessaire (avec marge)
+        const share = Math.min(1, (prev.defense * cfg.ai.attackMargin) / Math.max(0.01, prev.attack) + 0.05);
         let value = cfg.biomes[world.cells[nb].biome].food + 0.3;
         if (t.owner >= 0) {
           const enemy = state.colonies[t.owner];
           value += enemy.nest === nb && enemy.queenAlive ? 3 : 0.5;
         }
-        const score = value / (send + 1);
-        if (score > bestScore) { bestScore = score; best = { to: nb, send }; }
+        const score = value / (prev.defense + 1);
+        if (score > bestScore) { bestScore = score; best = { to: nb, g: SIM.scaleGroup(avail, share, true) }; }
       }
       if (best) {
-        const r = SIM.sendAnts(state, world, cfg, col.id, id, best.to, best.send);
+        const r = SIM.sendAnts(state, world, cfg, col.id, id, best.to, best.g);
         if (r.ok) incoming[col.id + ':' + best.to] = true;
         continue;
       }
-      if (!frontier && avail >= 4) {
-        // Case intérieure : acheminer les fourmiz vers la frontière
+      if (!frontier && SIM.total(avail) >= 4) {
+        // Case intérieure : acheminer le surplus vers la frontière par les galeries
         const ownNbs = nbs.filter((nb) => state.cells[nb] && state.cells[nb].owner === col.id);
         let target = null;
         for (const nb of ownNbs) {
