@@ -223,6 +223,7 @@
       startedAt: opts.now || 0,
       phase: 'playing',
       landCount: world.ids.length,
+      worldVersion: cfg.online.worldVersion,
       colonies: [],
       cells: {},
       moves: [],
@@ -276,6 +277,15 @@
 
   /** Durée d'un tick en millisecondes. */
   function tickMs(cfg) { return cfg.time.tickSeconds * 1000; }
+
+  /** Réglages du mode en ligne : le même jeu, mais le temps passe online.slowdown fois moins vite. */
+  function onlineConfig(cfg) {
+    if (cfg._online) return cfg;
+    const out = Object.assign({}, cfg, { time: Object.assign({}, cfg.time) });
+    out.time.tickSeconds = cfg.time.tickSeconds * (cfg.online.slowdown || 1);
+    Object.defineProperty(out, '_online', { value: true });
+    return out;
+  }
 
   /** Nombre de ticks que le monde doit avoir atteint à l'instant « now » (ms). */
   function tickAt(state, cfg, now) {
@@ -355,6 +365,7 @@
     const palette = cfg.colors.players;
     const name = cleanName(who.name, cfg) || 'Colonie ' + (humans + 1);
     const col = newColony(state.colonies.length, name, palette[humans % palette.length], false, cfg, who.uid);
+    col.bornTick = state.tick;
     col.nest = id;
     state.colonies.push(col);
     state.cells[id] = Object.assign({ owner: col.id }, startGarrison(cfg));
@@ -946,7 +957,7 @@
 
   const SIM = {
     CASTES, rand, hash01, total, power, scaleGroup, pickGroup, getCell, seasonAt, createWorldState, hydrate,
-    joinColony, canFound, colonyOf, applyOrder, sendAnts, rally, findPath, pathLegs, pathCells, groupSpeed, tickMs, tickAt,
+    joinColony, canFound, colonyOf, applyOrder, sendAnts, rally, findPath, pathLegs, pathCells, groupSpeed, tickMs, tickAt, onlineConfig,
     autoBalanceWorkers, armyGroup,
     setLayMode, setCaste, raiseQueen, evolve, evoLevel, evoCost, resolveCombat, forceNeeded, defenseFactor,
     defensePower, attackFactor, attackPreview, optimalWorkers, harvestInfo, logistics, travelTicks, refreshStats,

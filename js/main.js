@@ -5,13 +5,14 @@
 (function () {
   'use strict';
   const FZ = window.FZ;
-  const cfg = FZ.CONFIG;
   const SIM = FZ.SIM;
   const NAME_KEY = 'fourmiz-name';
 
   const params = new URLSearchParams(location.search);
   const hasFirebase = !!(window.FZ_FIREBASE && window.FZ_FIREBASE.apiKey);
   const mode = params.has('solo') || !hasFirebase ? 'solo' : 'online';
+  // En ligne, le temps passe plus lentement (même réglage que le serveur).
+  const cfg = mode === 'online' ? SIM.onlineConfig(FZ.CONFIG) : FZ.CONFIG;
   document.body.classList.add('mode-' + mode);
 
   let world, gm, ui, backend;

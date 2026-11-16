@@ -131,6 +131,10 @@
       thinkEvery: 15,
       /** Marge de sécurité : force envoyée / force nécessaire. */
       attackMargin: 1.35,
+      /** Contre un joueur humain, l'IA exige une marge plus grande… */
+      humanMargin: 2,
+      /** …et ne l'attaque pas du tout pendant ses N premiers ticks (protection du débutant). */
+      humanProtectTicks: 1500,
       /** Fourmiz gardées en défense sur chaque case. */
       keepHome: 4,
       names: ['Rouges de Feu', 'Charpentières', 'Légionnaires', 'Moissonneuses', 'Tisserandes', 'Coupeuses de feuilles', 'Pharaonnes'],
@@ -141,6 +145,10 @@
       gameId: 'monde',
       /** Si le serveur a pris du retard, il rattrape au plus N ticks d'un coup (le reste du temps est sauté). */
       maxCatchUpTicks: 600,
+      /** En ligne, le temps passe N fois moins vite qu'en solo (un tick = tickSeconds × N). */
+      slowdown: 8,
+      /** Changer ce numéro recrée le monde en ligne au prochain passage du serveur. */
+      worldVersion: 2,
       /** Colonies IA présentes dans chaque nouveau monde en ligne. */
       aiCount: 4,
       /** Après une victoire, un nouveau monde naît au bout de N minutes. */

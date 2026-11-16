@@ -17,7 +17,7 @@ const admin = require('firebase-admin');
 const h3 = require('h3-js');
 const topojson = require('topojson-client');
 const land = require('world-atlas/land-110m.json');
-const CONFIG = require('./shared/config.js');
+const CONFIG = require('./shared/sim.js').onlineConfig(require('./shared/config.js'));
 const WORLD = require('./shared/world.js');
 const ENGINE = require('./engine.js');
 

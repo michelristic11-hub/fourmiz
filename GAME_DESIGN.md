@@ -15,7 +15,8 @@ Un jeu web multijoueur persistant (temps réel lent, façon OGame) où chaque jo
 
 ## Règles (valeurs dans `functions/shared/config.js`)
 
-- **Rythme** : un tick toutes les 0,2 s, en continu. Une saison dure 10 minutes.
+- **Rythme** : en solo, un tick toutes les 0,2 s (une saison = 10 minutes). En ligne, le temps passe 8 fois moins vite (`online.slowdown`) : un tick toutes les 1,6 s, une saison ≈ 1 h 20.
+- **IA face aux humains** : aucune attaque contre un joueur pendant ses 1 500 premiers ticks (≈ 40 min en ligne), puis seulement avec une force double.
 - **Départ** : une case libre à au moins 4 cases d'une autre colonie, avec 24 ouvrières, 6 soldates et 100 de nourriture.
 - **Castes** : ouvrière (force 1, mange 0,04/tick, coûte 1), soldate (force 3, mange 0,08, coûte 2,5), éclaireuse (force 0,6, mange 0,04, coûte 1,5, deux fois plus rapide). La reine pond selon une répartition choisie (Récolte 85/10/5, Équilibre 60/35/5, Guerre 30/65/5, Exploration 50/20/30).
 - **Ponte** : 0,5 œuf/tick + 0,02 par territoire (max 3), modes arrêt / normal / intensif, ralentie en hiver.

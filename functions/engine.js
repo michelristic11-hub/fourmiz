@@ -22,6 +22,11 @@ function advance(state, world, cfg, now) {
     state.startedAt = (state.lastTickAt || now) - state.tick * ms;
   }
   delete state.lastTickAt;
+  if (state.tickMs !== ms) {
+    // La durée d'un tick a changé (réglage modifié) : on garde le tick actuel, à partir de maintenant.
+    if (state.tickMs) state.startedAt = now - state.tick * ms;
+    state.tickMs = ms;
+  }
   if (state.phase !== 'playing') {
     if (!state.overAt) state.overAt = now;
     return state;
@@ -42,7 +47,9 @@ function advance(state, world, cfg, now) {
 }
 
 function freshWorld(world, cfg, now, era) {
-  return SIM.createWorldState(world, cfg, { aiCount: cfg.online.aiCount, era, now });
+  const s = SIM.createWorldState(world, cfg, { aiCount: cfg.online.aiCount, era, now });
+  s.tickMs = SIM.tickMs(cfg);
+  return s;
 }
 
 /**
@@ -50,7 +57,7 @@ function freshWorld(world, cfg, now, era) {
  * et en recrée un nouveau quelque temps après une victoire.
  */
 function runTick(state, world, cfg, now) {
-  if (!state || state.landCount !== world.ids.length) return freshWorld(world, cfg, now, state ? (state.era || 0) + 1 : 1);
+  if (!state || state.landCount !== world.ids.length || (state.worldVersion || 1) !== cfg.online.worldVersion) return freshWorld(world, cfg, now, state ? (state.era || 0) + 1 : 1);
   advance(state, world, cfg, now);
   if (state.phase === 'over' && now - state.overAt >= cfg.online.resetAfterMinutes * 60000) {
     return freshWorld(world, cfg, now, (state.era || 1) + 1);

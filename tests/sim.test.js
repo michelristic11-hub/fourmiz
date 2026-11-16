@@ -449,3 +449,41 @@ test('point dans polygone avec trou', () => {
   assert.strictEqual(WORLD.onLand(polys, 2, 2), true);
   assert.strictEqual(WORLD.onLand(polys, 5, 5), false);
 });
+
+test('en ligne : temps ralenti, changement de vitesse sans saut, nouveau monde, protection des débutants', () => {
+  const w = fakeWorld(40, 30);
+  const base = clone(CONFIG);
+  base.online.aiCount = 2;
+  base.victory.landShare = 1;
+  const cfg = SIM.onlineConfig(base);
+  assert.strictEqual(cfg.time.tickSeconds, base.time.tickSeconds * base.online.slowdown);
+  assert.strictEqual(SIM.onlineConfig(cfg), cfg);
+  // 1 minute en ligne = slowdown fois moins de ticks qu'en solo
+  let s = ENGINE.runTick(null, w, cfg, 1000);
+  s = ENGINE.runTick(clone(s), w, cfg, 61000);
+  assert.strictEqual(s.tick, Math.floor(60 / cfg.time.tickSeconds));
+  // Ancien monde (tick plus court) : pas de saut de temps au changement de réglage
+  const old = clone(s); old.tickMs = 200; old.startedAt = 60000 - old.tick * 200;
+  const before = old.tick;
+  const after = ENGINE.runTick(old, w, cfg, 60000);
+  assert.strictEqual(after.tick, before);
+  // Ancienne version du monde : recréé
+  const stale = clone(s); stale.worldVersion = 1;
+  const fresh = ENGINE.runTick(stale, w, cfg, 61000);
+  assert.strictEqual(fresh.tick, 0);
+  // Protection : une IA collée à un débutant ne l'attaque pas
+  const c2 = cfgNoAI(); c2.ai.humanProtectTicks = 1000;
+  const st = SIM.createWorldState(w, c2, { aiCount: 0, seed: 3 });
+  SIM.applyOrder(st, w, c2, { uid: 'u', type: 'join', name: 'H', cell: 'c10_10' });
+  const ai = { id: st.colonies.length, name: 'IA', color: '#000', isAI: true, uid: null, food: 100, queenAlive: true, nest: 'c12_10', layMode: 'normal', caste: 'balanced', layProgress: 0, layAcc: { w: 0, s: 0, e: 0 }, evo: {}, autoWorkers: true, alive: true, stats: {} };
+  st.colonies.push(ai);
+  st.cells.c12_10 = { owner: ai.id, w: 20, s: 200, e: 0 };
+  st.cells.c11_10 = { owner: 0, w: 1, s: 0, e: 0 };
+  SIM.refreshStats(st, w, c2);
+  st.tick = c2.ai.thinkEvery * 3;
+  AI.thinkAll(st, w, c2, SIM);
+  assert.ok(!st.moves.some((m) => m.owner === ai.id && m.to === 'c11_10'), 'débutant protégé');
+  st.tick = 2000 + c2.ai.thinkEvery * 3 - ((2000) % c2.ai.thinkEvery);
+  AI.thinkAll(st, w, c2, SIM);
+  assert.ok(st.moves.some((m) => m.owner === ai.id && m.to === 'c11_10'), 'après la protection, l’IA attaque');
+});

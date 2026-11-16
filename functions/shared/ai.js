@@ -68,10 +68,15 @@
         if (t.owner === col.id) continue;
         frontier = true;
         if (incoming[col.id + ':' + nb]) continue;
+        const foe = t.owner >= 0 ? state.colonies[t.owner] : null;
+        const human = foe && !foe.isAI;
+        // Les débutants humains sont protégés un moment, puis l'IA ne les attaque qu'avec une grosse marge.
+        if (human && state.tick - (foe.bornTick || 0) < (cfg.ai.humanProtectTicks || 0)) continue;
+        const margin = human ? (cfg.ai.humanMargin || cfg.ai.attackMargin) : cfg.ai.attackMargin;
         const prev = SIM.attackPreview(state, world, cfg, col.id, [id, nb], avail);
-        if (prev.attack < prev.defense * cfg.ai.attackMargin) continue;
+        if (prev.attack < prev.defense * margin) continue;
         // On n'envoie que la part nécessaire (avec marge)
-        const share = Math.min(1, (prev.defense * cfg.ai.attackMargin) / Math.max(0.01, prev.attack) + 0.05);
+        const share = Math.min(1, (prev.defense * margin) / Math.max(0.01, prev.attack) + 0.05);
         let value = cfg.biomes[world.cells[nb].biome].food + 0.3;
         if (t.owner >= 0) {
           const enemy = state.colonies[t.owner];
