@@ -31,7 +31,7 @@
     castes: {
       w: { name: 'Ouvrière', plural: 'ouvrières', icon: '🐜', power: 1, upkeep: 0.04, cost: 1, speed: 1 },
       s: { name: 'Soldate', plural: 'soldates', icon: '⚔️', power: 3, upkeep: 0.08, cost: 2.5, speed: 1 },
-      e: { name: 'Éclaireuse', plural: 'éclaireuses', icon: '💨', power: 0.6, upkeep: 0.04, cost: 1.5, speed: 0.5 },
+      e: { name: 'Éclaireuse', plural: 'éclaireuses', icon: '💨', power: 0.6, upkeep: 0.04, cost: 1.5, speed: 0.5, wildBonus: 4 },
     },
     /** Répartitions de ponte proposées au joueur (part de chaque caste). */
     castePresets: {
@@ -74,6 +74,8 @@
       winterSpoil: 0.0002,
       /** En famine, part des fourmiz qui meurent chaque tick. */
       starvationRate: 0.004,
+      /** Répartition automatique des ouvrières : tous les N ticks. */
+      autoEvery: 10,
     },
 
     combat: {
@@ -98,8 +100,10 @@
       baseTravelTicks: 4,
       /** Dans ses propres galeries, les fourmiz vont plus vite (multiplicateur de durée). */
       tunnelFactor: 0.5,
-      /** Longueur maximale d'un trajet (en cases). */
+      /** Longueur maximale d'un trajet par les galeries (en cases). */
       maxPathLength: 80,
+      /** Expédition hors de ses galeries (terres inconnues, mers) : durée multipliée par ce facteur, par case. */
+      expeditionFactor: 1.5,
       /** « Rassembler ici » : chaque case garde ses ouvrières utiles (jusqu'au nombre idéal), au moins rallyKeep. */
       rallyKeep: 1,
       /** « Rassembler ici » : nombre maximal de cases qui envoient leurs fourmiz. */
@@ -124,7 +128,7 @@
     ai: {
       count: 5,
       /** Les IA réfléchissent tous les N ticks. */
-      thinkEvery: 5,
+      thinkEvery: 15,
       /** Marge de sécurité : force envoyée / force nécessaire. */
       attackMargin: 1.35,
       /** Fourmiz gardées en défense sur chaque case. */
@@ -136,7 +140,7 @@
     online: {
       gameId: 'monde',
       /** Si le serveur a pris du retard, il rattrape au plus N ticks d'un coup (le reste du temps est sauté). */
-      maxCatchUpTicks: 9000,
+      maxCatchUpTicks: 600,
       /** Colonies IA présentes dans chaque nouveau monde en ligne. */
       aiCount: 4,
       /** Après une victoire, un nouveau monde naît au bout de N minutes. */

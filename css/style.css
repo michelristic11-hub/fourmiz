@@ -207,3 +207,9 @@ body.mode-solo .online-only, body.mode-online .solo-only { display: none !import
   body.panel-open #actionbar, body.panel-open #placement, body.panel-open #mapbtns { display: none !important; }
   #toast { top: 104px !important; left: 8px !important; right: 64px; transform: none !important; max-width: none !important; }
 }
+
+/* Répartition automatique */
+.auto-row { margin: 6px 0 2px; font-size: 13px; }
+.auto-row label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+.auto-row .hint { margin-top: 2px; }
+#send-caste { flex-wrap: wrap; }

@@ -127,7 +127,7 @@ test('envoi puis conquête d’une case sauvage avec des soldates', () => {
   assert.ok(SIM.applyOrder(s, w, cfg, { uid: 'u1', type: 'send', from: 'c5_5', to: 'c6_5', s: 10 }).ok);
   for (let i = 0; i < 20; i++) SIM.step(s, w, cfg);
   assert.strictEqual(s.cells.c6_5.owner, SIM.colonyOf(s, 'u1').id);
-  assert.ok(s.cells.c6_5.s > 0 && s.cells.c6_5.w === 0, 'les survivantes sont des soldates');
+  assert.ok(s.cells.c6_5.s > 0, 'des soldates ont survécu');
 });
 
 test('ponte : respecte la répartition des castes', () => {
@@ -282,7 +282,9 @@ test('serveur : temps continu, rattrapage, ordres, aller-retour Firebase', () =>
   assert.strictEqual(s.tick, 0);
   s = ENGINE.runTick(throughFirebase(s), w, cfg, 1000 + 60000);
   assert.strictEqual(s.tick, 60000 / ms);
-  let out = ENGINE.runOrder(throughFirebase(s), w, cfg, { uid: 'u1', type: 'join', name: 'Alice', cell: w.ids[123] }, 1000 + 61000);
+  const owned = Object.keys(s.cells).filter((k) => s.cells[k].owner >= 0);
+  const free = w.ids.find((id) => w.neighbors(id).length === 6 && owned.every((k) => w.distance(id, k) >= 10));
+  let out = ENGINE.runOrder(throughFirebase(s), w, cfg, { uid: 'u1', type: 'join', name: 'Alice', cell: free }, 1000 + 61000);
   assert.ok(out.result.ok, out.result.reason);
   assert.strictEqual(out.state.tick, 61000 / ms);
   s = out.state;
@@ -347,7 +349,10 @@ test('trajet longue distance par les galeries, éclaireuses plus rapides', () =>
   assert.ok(fast.arrive - fast.depart < slow.arrive - slow.depart, 'éclaireuses plus rapides');
   r = SIM.applyOrder(s, w, cfg, { uid: 'u1', type: 'send', from: 'c5_5', to: 'c13_5', s: 20 });
   assert.ok(r.ok, r.reason);
-  assert.strictEqual(SIM.applyOrder(s, w, cfg, { uid: 'u1', type: 'send', from: 'c5_5', to: 'c20_15', w: 5 }).ok, false);
+  // Expédition : une case loin de tout territoire reste atteignable (terres inconnues, mers)
+  const exp = SIM.findPath(s, w, cfg, me.id, 'c5_5', 'c20_15');
+  assert.ok(exp.ok && exp.jump > 1, 'expédition possible');
+  assert.strictEqual(exp.path[exp.path.length - 1], 'c20_15');
   for (let i = 0; i < 30; i++) { me.food = 1000; SIM.step(s, w, cfg); }
   assert.ok(s.cells.c12_5.w >= 11 && s.cells.c12_5.e >= 10, 'renforts arrivés');
   assert.strictEqual(s.cells.c13_5.owner, me.id, 'la case lointaine est prise');
@@ -369,6 +374,64 @@ test('rassembler ici : les ouvrières utiles restent, le reste converge', () => 
   for (let i = 0; i < 120; i++) SIM.step(s, w, cfg);
   assert.ok(s.cells.c10_5.s >= 50, 'les soldates sont arrivées');
   assert.strictEqual(SIM.applyOrder(s, w, cfg, { uid: 'u1', type: 'rally', cell: 'c20_15' }).ok, false);
+});
+
+test('répartition automatique : les ouvrières en trop vont là où il en manque', () => {
+  const w = fakeWorld();
+  const cfg = cfgNoAI();
+  const s = worldWithPlayer(w, cfg);
+  const me = SIM.colonyOf(s, 'u1');
+  const opt = SIM.optimalWorkers(w, cfg, 'c5_5');
+  s.cells.c5_5 = { owner: me.id, w: opt * 4, s: 5, e: 0 };
+  for (let q = 6; q <= 8; q++) s.cells[`c${q}_5`] = { owner: me.id, w: 0, s: 0, e: 0 };
+  SIM.setLayMode(s, cfg, me.id, 'stop');
+  for (let i = 0; i < 300; i++) { me.food = 1000; SIM.step(s, w, cfg); }
+  for (let q = 6; q <= 8; q++) assert.ok(s.cells[`c${q}_5`].w >= opt - 3, `c${q}_5 a ${s.cells[`c${q}_5`].w} ouvrières`);
+  assert.strictEqual(s.cells.c5_5.s, 5, 'les soldates ne bougent pas');
+  // Désactivable
+  SIM.applyOrder(s, w, cfg, { uid: 'u1', type: 'auto', on: false });
+  s.cells.c5_5.w = opt * 4; s.cells.c6_5.w = 0;
+  for (let i = 0; i < 50; i++) { me.food = 1000; SIM.step(s, w, cfg); }
+  assert.strictEqual(s.cells.c6_5.w, 0);
+});
+
+test('armée : soldates, éclaireuses et ouvrières en trop seulement', () => {
+  const w = fakeWorld();
+  const opt = SIM.optimalWorkers(w, CONFIG, 'c5_5');
+  assert.deepStrictEqual(SIM.armyGroup(w, CONFIG, 'c5_5', { w: opt + 10, s: 8, e: 4 }, 1), { w: 10, s: 8, e: 4 });
+  assert.deepStrictEqual(SIM.armyGroup(w, CONFIG, 'c5_5', { w: opt - 2, s: 8, e: 0 }, 0.5), { w: 0, s: 4, e: 0 });
+});
+
+test('éclaireuses : redoutables contre les insectes sauvages, insensibles à la fatigue', () => {
+  const w = fakeWorld();
+  const cfg = cfgNoAI();
+  const s = worldWithPlayer(w, cfg);
+  const me = SIM.colonyOf(s, 'u1');
+  const path = ['c5_5', 'c6_5'];
+  const scouts = SIM.attackPreview(s, w, cfg, me.id, path, { w: 0, s: 0, e: 10 });
+  const soldiers = SIM.attackPreview(s, w, cfg, me.id, path, { w: 0, s: 10, e: 0 });
+  assert.ok(scouts.attack / 10 > 1.5, 'une éclaireuse vaut plus de 1,5 contre les sauvages');
+  assert.ok(soldiers.attack > scouts.attack, 'les soldates restent plus fortes au total');
+  const far = SIM.attackFactor(s, w, cfg, me.id, 'c6_5', 30, { w: 0, s: 0, e: 5 });
+  assert.strictEqual(far.fatigue, 1);
+});
+
+test('expédition par-delà la mer : un continent isolé reste accessible', () => {
+  // Deux îles séparées par une mer (colonnes 10 à 19 absentes)
+  const w = fakeWorld(30, 10);
+  for (const id of w.ids.slice()) if (w.cells[id].q >= 10 && w.cells[id].q < 20) { delete w.cells[id]; w.ids.splice(w.ids.indexOf(id), 1); }
+  const cfg = cfgNoAI();
+  const s = SIM.createWorldState(w, cfg, { seed: 3 });
+  assert.ok(SIM.applyOrder(s, w, cfg, { uid: 'u1', type: 'join', name: 'Ile', cell: 'c3_5' }).ok);
+  const me = SIM.colonyOf(s, 'u1');
+  s.cells.c3_5 = { owner: me.id, w: 20, s: 20, e: 30 };
+  SIM.setLayMode(s, cfg, me.id, 'stop');
+  const r = SIM.applyOrder(s, w, cfg, { uid: 'u1', type: 'send', from: 'c3_5', to: 'c22_5', e: 30, s: 10 });
+  assert.ok(r.ok, r.reason);
+  const mv = s.moves[s.moves.length - 1];
+  assert.ok(mv.arrive - mv.depart > 30, 'une traversée prend du temps');
+  for (let i = 0; i < mv.arrive - mv.depart + 2; i++) { me.food = 1000; SIM.step(s, w, cfg); }
+  assert.strictEqual(s.cells.c22_5.owner, me.id, 'l’autre continent est atteint');
 });
 
 test('biomes : quelques repères géographiques', () => {

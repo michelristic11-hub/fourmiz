@@ -19,7 +19,8 @@
   let selected = null;   // case à soi choisie (barre d'action avec ordres)
   let inspected = null;  // autre case touchée (fiche seule)
   let share = 0.5;
-  let sendCaste = 'all'; // castes envoyées : 'all' | 'w' | 's' | 'e'
+  let sendCaste = 'army'; // castes envoyées : 'army' | 'all' | 'w' | 's' | 'e'
+  let pendingJump = null; // expédition en attente de confirmation (toucher deux fois)
   let dirty = true;
   let hadColony = false;
   let joinPending = false;
@@ -57,13 +58,14 @@
 
   /** Groupe de fourmiz qui partirait de cette case avec les réglages choisis. */
   function groupFrom(from) {
+    if (sendCaste === 'army') return SIM.armyGroup(world, cfg, from, state.cells[from], share);
     return SIM.pickGroup(state.cells[from], sendCaste, share);
   }
 
   /** Texte d'aperçu d'un envoi (renfort ou attaque, force, bonus, durée). */
-  function describeSend(m, path, g) {
+  function describeSend(m, path, g, jump) {
     const legs = SIM.pathLegs(state, world, cfg, m.id, path, g);
-    const eta = ui.duration(legs[legs.length - 1]);
+    const eta = (jump ? '🌊 expédition · ' : '') + ui.duration(legs[legs.length - 1]);
     const to = path[path.length - 1];
     if (mine(to, m)) return { ok: true, text: `${ui.castesLine(g)} en renfort · ${eta}` };
     const p = SIM.attackPreview(state, world, cfg, m.id, path, g);
@@ -86,7 +88,7 @@
     if (SIM.total(g) < 1) return ui.say('Aucune fourmi de cette caste sur la case.');
     const p = SIM.findPath(state, world, cfg, m.id, from, to);
     if (!p.ok) return ui.say(p.reason);
-    const d = describeSend(m, p.path, g);
+    const d = describeSend(m, p.path, g, p.jump);
     send({ type: 'send', from, to, w: g.w, s: g.s, e: g.e }, d.text);
   }
 
@@ -111,8 +113,18 @@
     if (selected) {
       const neighbor = world.neighbors(selected).indexOf(id) >= 0;
       if (mine(id, m) && !neighbor) { selected = id; return; }
-      if (neighbor || SIM.findPath(state, world, cfg, m.id, selected, id).ok) { sendFrom(selected, id); return; }
+      const p = neighbor ? null : SIM.findPath(state, world, cfg, m.id, selected, id);
+      if (neighbor || (p.ok && !p.jump)) { pendingJump = null; sendFrom(selected, id); return; }
+      if (p.ok && p.jump) {
+        // Expédition lointaine : on demande une confirmation pour éviter les envois par erreur.
+        if (pendingJump && pendingJump.from === selected && pendingJump.to === id) { pendingJump = null; sendFrom(selected, id); return; }
+        pendingJump = { from: selected, to: id };
+        const g = groupFrom(selected);
+        if (SIM.total(g) >= 1) ui.say(describeSend(m, p.path, g, true).text + ' — touche encore cette case pour lancer l’expédition.');
+        return;
+      }
     }
+    pendingJump = null;
     if (mine(id, m)) selected = id;
     else { selected = null; inspected = id; }
   }
@@ -133,7 +145,7 @@
       gm.showPath(p.path, m.color);
       const g = groupFrom(from);
       if (SIM.total(g) < 1) { ui.dragTip('🚫 Aucune fourmi de cette caste ici', point); return; }
-      ui.dragTip(describeSend(m, p.path, g).text, point);
+      ui.dragTip(describeSend(m, p.path, g, p.jump).text, point);
     },
     dragEnd(from, to) {
       gm.showPath(null);
@@ -152,6 +164,9 @@
     speed(v) { if (backend.setSpeed) backend.setSpeed(v); },
     share(v) { share = v; },
     sendCaste(v) { sendCaste = v; },
+    autoWorkers(on) {
+      send({ type: 'auto', on }, on ? '🔄 Les ouvrières inutiles iront où il en manque.' : 'Répartition automatique coupée.');
+    },
     layMode(m) { send({ type: 'lay', mode: m }); },
     caste(p) { send({ type: 'caste', preset: p }); },
     evolve(key) {

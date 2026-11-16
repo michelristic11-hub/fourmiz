@@ -130,6 +130,10 @@
           stateRef.on('value', (snap) => {
             const v = snap.val();
             predicted = v ? SIM.hydrate(v) : null;
+            // Ancien état sans horloge continue : on la reconstruit pour pouvoir prédire.
+            if (predicted && !predicted.startedAt && predicted.lastTickAt) {
+              predicted.startedAt = predicted.lastTickAt - predicted.tick * SIM.tickMs(cfg);
+            }
             catchUp();
             onState(predicted);
           }, (err) => hooks.onError(err));

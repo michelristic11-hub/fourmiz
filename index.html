@@ -53,6 +53,10 @@
         <div class="stat"><span class="label">Nourriture</span><span class="value" id="st-food-short">0</span></div>
       </div>
       <div class="castes" id="st-castes"></div>
+      <div class="auto-row">
+        <label><input type="checkbox" id="auto-workers" checked> 🔄 Répartition automatique des ouvrières</label>
+        <div class="hint" id="st-workers"></div>
+      </div>
       <div class="more">
         <div class="food">
           <div class="food-head"><span class="label">Réserve</span><span id="st-food">0 / 0</span></div>
@@ -84,7 +88,12 @@
         <li><b>Glisse</b> d'une de tes cases vers une autre pour envoyer des fourmiz, même loin : elles passent par tes galeries.</li>
         <li>Ou <b>touche</b> une de tes cases, puis une case voisine surlignée.</li>
         <li><b>Ouvrières</b> : elles récoltent. Chaque case a un nombre idéal d'ouvrières, et rapporte moins loin du nid.</li>
-        <li><b>Soldates</b> (force 3) pour attaquer, <b>éclaireuses</b> deux fois plus rapides. Attaquer depuis plusieurs côtés donne un bonus ; un long trajet fatigue.</li>
+        <li><b>Soldates</b> (force 3) : la conquête contre les autres colonies.</li>
+        <li><b>Éclaireuses</b> : deux fois plus rapides, jamais fatiguées et <b>×4 contre les insectes sauvages</b>. Idéales pour prendre les cases libres et pour les expéditions.</li>
+        <li><b>Armée</b> (choix par défaut) envoie soldates, éclaireuses et ouvrières en trop, sans vider la récolte de la case.</li>
+        <li>La <b>répartition automatique</b> déplace les ouvrières inutiles vers les cases qui en manquent.</li>
+        <li><b>Expéditions</b> 🌊 : tu peux glisser vers n'importe quelle case du monde, même sur un autre continent. Le trajet hors de tes galeries est plus lent.</li>
+        <li>Attaquer depuis plusieurs côtés donne un bonus ; un long trajet fatigue.</li>
         <li><b>Rassembler ici</b> fait venir les fourmiz en trop de tout ton territoire. En hiver, la récolte chute et la réserve se gâte : prévois des stocks.</li>
       </ul>
     </section>
@@ -113,10 +122,11 @@
     <div id="ab-actions">
       <span class="label">Fourmiz à envoyer</span>
       <div class="seg" id="send-caste">
-        <button data-caste="all" class="on">Toutes</button>
+        <button data-caste="army" class="on" title="Soldates, éclaireuses et ouvrières en trop : la récolte de la case continue">🛡️ Armée</button>
         <button data-caste="s">⚔️ Soldates</button>
-        <button data-caste="w">🐜 Ouvrières</button>
         <button data-caste="e">💨 Éclair.</button>
+        <button data-caste="w">🐜 Ouvr.</button>
+        <button data-caste="all">Toutes</button>
       </div>
       <div class="seg" id="send-share">
         <button data-share="0.25">25 %</button>

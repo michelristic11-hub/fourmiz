@@ -24,7 +24,7 @@ const ENGINE = require('./engine.js');
 /** Doit être la région de ta Realtime Database (us-central1 par défaut). */
 const REGION = 'us-central1';
 
-setGlobalOptions({ region: REGION, memory: '512MiB', maxInstances: 3 });
+setGlobalOptions({ region: REGION, memory: '1GiB', cpu: 1, maxInstances: 3 });
 admin.initializeApp();
 
 let world = null;
@@ -36,7 +36,7 @@ function getWorld() {
 
 const statePath = (gameId) => `games/${gameId}/state`;
 
-exports.tick = onSchedule({ schedule: 'every 1 minutes', timeoutSeconds: 60, maxInstances: 1 }, async () => {
+exports.tick = onSchedule({ schedule: 'every 1 minutes', timeoutSeconds: 120, maxInstances: 1 }, async () => {
   const w = getWorld();
   const now = Date.now();
   const res = await admin.database().ref(statePath(CONFIG.online.gameId)).transaction((cur) => ENGINE.runTick(cur, w, CONFIG, now));

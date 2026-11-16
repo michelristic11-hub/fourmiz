@@ -29,7 +29,7 @@
 
   /**
    * @param {object} cfg FZ.CONFIG
-   * @param {object} act { speed, newGame, layMode, caste, evolve, share, sendCaste, raiseQueen, rally,
+   * @param {object} act { speed, newGame, layMode, caste, evolve, share, sendCaste, autoWorkers, raiseQueen, rally,
    *                       closeSelection, overlayButton, userButton, goNest, goArmy, goAll }
    */
   function createUI(cfg, act) {
@@ -68,6 +68,7 @@
     $('#btn-queen').addEventListener('click', () => act.raiseQueen());
     $('#btn-rally').addEventListener('click', () => act.rally());
     $('#ab-close').addEventListener('click', () => act.closeSelection());
+    $('#auto-workers').addEventListener('change', (e) => act.autoWorkers(e.target.checked));
     $('#overlay-btn').addEventListener('click', () => act.overlayButton());
     $('#btn-user').addEventListener('click', () => act.userButton());
     $('#go-nest').addEventListener('click', () => act.goNest());
@@ -195,6 +196,11 @@
         $('#st-ants').textContent = fmt(s.ants);
         $('#st-terr').textContent = fmt(s.territories);
         $('#st-castes').innerHTML = `${castesLine(s, cfg)} <span class="hint">· force ${fmt(s.power)}</span>`;
+        const autoBox = $('#auto-workers');
+        if (document.activeElement !== autoBox) autoBox.checked = me.autoWorkers !== false;
+        $('#st-workers').innerHTML = (s.idle > 0.5 ? `🛌 ${fmt(s.idle)} ouvrières en trop` : '✅ aucune ouvrière inutile') +
+          (s.missing > 0.5 ? ` · <span class="neg">${fmt(s.missing)} manquent</span> sur tes cases` : '') +
+          (me.autoWorkers === false ? ' · utilise « Rassembler ici » ou glisse-les' : '');
         const net = s.net || 0;
         const perS = 1 / cfg.time.tickSeconds;
         $('#st-food-short').innerHTML = `${fmt(me.food)} <span class="${net >= 0 ? 'pos' : 'neg'}" style="font-size:12px">${net >= 0 ? '▲' : '▼'}</span>`;

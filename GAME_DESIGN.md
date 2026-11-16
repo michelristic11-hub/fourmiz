@@ -23,6 +23,10 @@ Un jeu web multijoueur persistant (temps réel lent, façon OGame) où chaque jo
 - **Hiver** : récolte ×0,2 hors tropiques, la réserve perd 0,02 %/tick (réduit par les greniers).
 - **Combat** : loi de Lanchester au carré sur les forces. Défense : ×1,25, × biome, ×1,5 sur le nid, ×1,3 à 2 cases du nid. Attaque : +15 % par côté en plus (max +60 %), fatigue −4 % par case au-delà de 3 (min −40 %).
 - **Évolutions** (3 niveaux, coût ×2,5 par niveau) : Mandibules (+15 % récolte), Greniers (+50 % stock, −35 % pertes d'hiver), Champignonnière (hiver +15 points), Mâchoires (+15 % attaque), Carapace (+15 % défense), Acide formique (soldates +1 force), Fécondité (+20 % ponte), Phéromones de piste (+5 cases de logistique), Galeries (trajets −20 %).
+- **Éclaireuses** : ×4 de force contre les insectes sauvages, jamais fatiguées, deux fois plus rapides.
+- **Armée** (envoi par défaut) : soldates + éclaireuses + ouvrières au-delà de l'idéal de la case.
+- **Répartition automatique** (activable) : toutes les 2 s, les ouvrières en trop glissent vers les cases voisines qui en manquent.
+- **Expéditions** : toute case du monde est accessible. Hors des galeries, le trajet part de la case la plus proche de la cible et traverse en ligne droite (×1,5 plus lent).
 - **Victoire** : 30 % des terres. En ligne, un nouveau monde naît une heure après.
 
 ## Architecture multijoueur (en place)
@@ -33,7 +37,7 @@ games/monde/orders/{id}         ordres des joueurs : join, send, lay, queen (éc
 games/monde/results/{uid}       résultat du dernier ordre de chaque joueur (accepté ou refusé, avec la raison)
 ```
 
-- **`tick`** (Cloud Function planifiée chaque minute) : rattrape le temps écoulé (300 ticks de 0,2 s) avec `SIM.step` et l'IA, dans une transaction. Elle crée le monde s'il n'existe pas, et recrée un nouveau monde une heure après une victoire.
+- **`tick`** (Cloud Function planifiée chaque minute) : rattrape le temps écoulé (au plus 600 ticks, soit 2 minutes, au-delà le monde saute le temps perdu) avec `SIM.step` et l'IA, dans une transaction. Elle crée le monde s'il n'existe pas, et recrée un nouveau monde une heure après une victoire.
 - **`order`** (déclenchée à chaque ordre) : valide l'ordre avec `SIM.applyOrder` (bonne colonie, case voisine, assez de fourmiz…), l'applique dans une transaction, puis écrit le résultat.
 - **Client** : écoute `state` en temps réel et envoie des ordres. Il ne calcule rien : impossible de tricher.
 - **Sécurité** : les règles n'autorisent que la lecture de l'état et la création d'ordres signés de son propre `uid`.
