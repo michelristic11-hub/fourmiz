@@ -278,11 +278,19 @@
   /** Durée d'un tick en millisecondes. */
   function tickMs(cfg) { return cfg.time.tickSeconds * 1000; }
 
+  /** La colonie dort-elle sous son bouclier d'absence ? */
+  function asleep(state, cfg, col) {
+    if (!col || col.isAI || !col.alive || !cfg.shield || !cfg.shield.enabled) return false;
+    const seen = col.lastSeenTick != null ? col.lastSeenTick : (col.bornTick || 0);
+    return state.tick - seen >= cfg.shield.afterTicks;
+  }
+
   /** Réglages du mode en ligne : le même jeu, mais le temps passe online.slowdown fois moins vite. */
   function onlineConfig(cfg) {
     if (cfg._online) return cfg;
     const out = Object.assign({}, cfg, { time: Object.assign({}, cfg.time) });
     out.time.tickSeconds = cfg.time.tickSeconds * (cfg.online.slowdown || 1);
+    out.shield = Object.assign({}, cfg.shield, { enabled: true });
     Object.defineProperty(out, '_online', { value: true });
     return out;
   }
@@ -419,7 +427,11 @@
     if (order.type === 'join') return joinColony(state, world, cfg, { uid: order.uid, name: order.name }, String(order.cell));
     const col = colonyOf(state, order.uid);
     if (!col) return { ok: false, reason: 'Tu n’as pas de colonie dans ce monde.' };
+    const wasAsleep = asleep(state, cfg, col);
+    col.lastSeenTick = state.tick; // tout ordre (même un simple « ping ») réveille la colonie
+    if (wasAsleep) addLog(state, `${col.name} se réveille.`, col.id);
     let r;
+    if (order.type === 'ping') return { ok: true };
     if (order.type === 'send') {
       let g;
       if (order.ants != null && order.w == null) {
@@ -550,6 +562,10 @@
     const grp = {};
     for (const k of CASTES) grp[k] = Math.max(0, Math.min(src[k] || 0, Math.floor(Number(g[k]) || 0)));
     if (total(grp) < 1) return { ok: false, reason: 'Pas assez de fourmiz.' };
+    const target = state.cells[to];
+    if (target && target.owner >= 0 && target.owner !== colonyId && asleep(state, cfg, state.colonies[target.owner])) {
+      return { ok: false, reason: '🛡️ Cette colonie dort sous son bouclier : impossible de l’attaquer.' };
+    }
     const p = findPath(state, world, cfg, colonyId, from, to);
     if (!p.ok) return p;
     return { ok: true, move: launch(state, world, cfg, colonyId, p.path, grp) };
@@ -707,6 +723,13 @@
     }
     const defOwner = cell.owner;
     const def = defOwner >= 0 ? state.colonies[defOwner] : null;
+    if (def && asleep(state, cfg, def)) {
+      // Bouclier : l'attaque rebondit, les fourmiz rentrent à leur case de départ (si elle est encore à elles).
+      const home = state.cells[move.from];
+      if (home && home.owner === move.owner) for (const k of CASTES) home[k] += move[k] || 0;
+      if (!atk.isAI) addLog(state, `🛡️ L'attaque de ${atk.name} rebondit sur le bouclier de ${def.name}.`, move.owner);
+      return;
+    }
     const steps = move.dist || (move.path || [0, 0]).length - 1;
     const attack = power(move, cfg, atk, defOwner < 0) * attackFactor(state, world, cfg, move.owner, move.to, steps, move).factor;
     const defense = power(cell, cfg, def) * defenseFactor(state, world, cfg, move.to, defOwner);
@@ -792,7 +815,7 @@
     const ex = {};
     for (const id in state.cells) {
       const c = state.cells[id];
-      if (c.owner < 0 || state.colonies[c.owner].autoWorkers === false) continue;
+      if (c.owner < 0 || state.colonies[c.owner].autoWorkers === false || asleep(state, cfg, state.colonies[c.owner])) continue;
       ex[id] = c.w - optimalWorkers(world, cfg, id);
     }
     for (const id in ex) {
@@ -870,7 +893,7 @@
 
     // 2. Économie de chaque colonie
     for (const col of state.colonies) {
-      if (!col.alive) continue;
+      if (!col.alive || asleep(state, cfg, col)) continue; // colonie endormie : économie gelée
       const s = col.stats;
       col.food += s.income - s.upkeep - s.spoil;
 
@@ -957,7 +980,7 @@
 
   const SIM = {
     CASTES, rand, hash01, total, power, scaleGroup, pickGroup, getCell, seasonAt, createWorldState, hydrate,
-    joinColony, canFound, colonyOf, applyOrder, sendAnts, rally, findPath, pathLegs, pathCells, groupSpeed, tickMs, tickAt, onlineConfig,
+    joinColony, canFound, colonyOf, applyOrder, sendAnts, rally, findPath, pathLegs, pathCells, groupSpeed, tickMs, tickAt, onlineConfig, asleep,
     autoBalanceWorkers, armyGroup,
     setLayMode, setCaste, raiseQueen, evolve, evoLevel, evoCost, resolveCombat, forceNeeded, defenseFactor,
     defensePower, attackFactor, attackPreview, optimalWorkers, harvestInfo, logistics, travelTicks, refreshStats,

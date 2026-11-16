@@ -36,11 +36,36 @@ function getWorld() {
 
 const statePath = (gameId) => `games/${gameId}/state`;
 
+/**
+ * Transaction sur l'état du monde, avec repli : si Firebase n'arrive pas à la valider (maxretry…),
+ * on relit l'état et on l'écrit directement. update(cur) renvoie le nouvel état, ou undefined pour ne rien écrire.
+ */
+async function updateState(ref, update) {
+  const wrapped = (cur) => {
+    const out = update(cur);
+    if (out) {
+      const bad = ENGINE.clean(out);
+      if (bad) logger.warn(`${bad} valeur(s) invalide(s) remise(s) à 0 dans l'état`);
+    }
+    return out;
+  };
+  try {
+    const res = await ref.transaction(wrapped);
+    return res.snapshot.val();
+  } catch (e) {
+    logger.warn(`Transaction échouée (${e.message}) : écriture directe.`);
+    const snap = await ref.once('value');
+    const out = wrapped(snap.val());
+    if (out === undefined) return snap.val();
+    await ref.set(out);
+    return out;
+  }
+}
+
 exports.tick = onSchedule({ schedule: 'every 1 minutes', timeoutSeconds: 120, maxInstances: 1 }, async () => {
   const w = getWorld();
   const now = Date.now();
-  const res = await admin.database().ref(statePath(CONFIG.online.gameId)).transaction((cur) => ENGINE.runTick(cur, w, CONFIG, now));
-  const s = res.snapshot.val();
+  const s = await updateState(admin.database().ref(statePath(CONFIG.online.gameId)), (cur) => ENGINE.runTick(cur, w, CONFIG, now));
   if (s) logger.info(`Ère ${s.era} · tick ${s.tick} · ${s.colonies ? Object.keys(s.colonies).length : 0} colonies`);
 });
 
@@ -54,7 +79,7 @@ exports.order = onValueCreated({ ref: '/games/{gameId}/orders/{orderId}' }, asyn
   const w = getWorld();
   const now = Date.now();
   let result = { ok: false, reason: 'Ordre non traité.' };
-  await db.ref(statePath(gameId)).transaction((cur) => {
+  await updateState(db.ref(statePath(gameId)), (cur) => {
     // Premier passage : le cache local est vide, Firebase rappelle avec la vraie valeur.
     if (cur === null) {
       result = { ok: false, reason: 'Le monde est en cours de création, réessaie dans une minute.' };

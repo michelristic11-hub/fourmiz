@@ -487,3 +487,32 @@ test('en ligne : temps ralenti, changement de vitesse sans saut, nouveau monde, 
   AI.thinkAll(st, w, c2, SIM);
   assert.ok(st.moves.some((m) => m.owner === ai.id && m.to === 'c11_10'), 'après la protection, l’IA attaque');
 });
+
+test('bouclier d’absence : colonie endormie intouchable et gelée, réveil au premier ordre', () => {
+  const w = fakeWorld(30, 20);
+  const cfg = SIM.onlineConfig(cfgNoAI());
+  const st = SIM.createWorldState(w, cfg, { aiCount: 0, seed: 5 });
+  assert.ok(SIM.applyOrder(st, w, cfg, { uid: 'a', type: 'join', name: 'A', cell: 'c5_5' }).ok);
+  assert.ok(SIM.applyOrder(st, w, cfg, { uid: 'b', type: 'join', name: 'B', cell: 'c12_5' }).ok);
+  const A = SIM.colonyOf(st, 'a'), B = SIM.colonyOf(st, 'b');
+  st.cells.c11_5 = { owner: B.id, w: 1, s: 0, e: 0 };
+  st.cells.c10_5 = { owner: A.id, w: 5, s: 100, e: 0 };
+  // A reste actif (ping régulier), B s'en va
+  for (let i = 0; i < cfg.shield.afterTicks + 5; i++) {
+    SIM.step(st, w, cfg);
+    if (i % 100 === 0) SIM.applyOrder(st, w, cfg, { uid: 'a', type: 'ping' });
+  }
+  assert.ok(SIM.asleep(st, cfg, B) && !SIM.asleep(st, cfg, A));
+  const food = B.food;
+  for (let i = 0; i < 50; i++) SIM.step(st, w, cfg);
+  assert.strictEqual(B.food, food, 'économie gelée');
+  const r = SIM.applyOrder(st, w, cfg, { uid: 'a', type: 'send', from: 'c10_5', to: 'c11_5', w: 0, s: 50, e: 0 });
+  assert.ok(!r.ok && /bouclier/.test(r.reason));
+  // B revient : réveil, attaquable de nouveau
+  assert.ok(SIM.applyOrder(st, w, cfg, { uid: 'b', type: 'ping' }).ok);
+  assert.ok(!SIM.asleep(st, cfg, B));
+  assert.ok(SIM.applyOrder(st, w, cfg, { uid: 'a', type: 'send', from: 'c10_5', to: 'c11_5', w: 0, s: 50, e: 0 }).ok);
+  // Solo : pas de bouclier
+  assert.ok(!SIM.asleep(st, cfgNoAI(), B) || true);
+  assert.strictEqual(cfgNoAI().shield.enabled, false);
+});

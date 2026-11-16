@@ -70,6 +70,7 @@
         if (incoming[col.id + ':' + nb]) continue;
         const foe = t.owner >= 0 ? state.colonies[t.owner] : null;
         const human = foe && !foe.isAI;
+        if (human && SIM.asleep(state, cfg, foe)) continue;
         // Les débutants humains sont protégés un moment, puis l'IA ne les attaque qu'avec une grosse marge.
         if (human && state.tick - (foe.bornTick || 0) < (cfg.ai.humanProtectTicks || 0)) continue;
         const margin = human ? (cfg.ai.humanMargin || cfg.ai.attackMargin) : cfg.ai.attackMargin;

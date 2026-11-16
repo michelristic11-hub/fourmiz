@@ -186,6 +186,14 @@
       else if (mode === 'solo') actions.newGame();
     },
     userButton() { if (backend.user) backend.signOut(); else backend.signIn(); },
+    invite() {
+      const url = location.origin + location.pathname;
+      const text = `Viens conquérir le monde avec tes fourmiz sur Fourmiz ! ${url}`;
+      if (navigator.share) { navigator.share({ title: 'Fourmiz', text, url }).catch(() => {}); return; }
+      const done = () => ui.say('📨 Lien copié : envoie-le à tes amis !');
+      if (navigator.clipboard) navigator.clipboard.writeText(url).then(done, () => ui.say(url));
+      else ui.say(url);
+    },
     goNest() {
       const m = me();
       if (m && m.nest) { gm.flyTo(m.nest, 5); selected = m.nest; dirty = true; }
@@ -306,6 +314,18 @@
     }
     backend.start(onState);
     setInterval(loop, 50);
+    if (mode === 'online') {
+      // Présence : tant que la page est ouverte, un petit « ping » garde le bouclier d'absence éteint.
+      let lastPing = 0;
+      const ping = () => {
+        if (document.hidden || !me() || Date.now() - lastPing < 20000) return;
+        lastPing = Date.now();
+        backend.send({ type: 'ping' });
+      };
+      setInterval(ping, 120000);
+      setTimeout(ping, 3000);
+      document.addEventListener('visibilitychange', ping);
+    }
     window.FZ.debug = { get state() { return state; }, world, gm, onClick, actions, drag, get backend() { return backend; } };
   }
 

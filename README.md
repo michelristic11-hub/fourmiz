@@ -28,7 +28,8 @@ Pour la mise en ligne, suis **`MISE_EN_LIGNE.md`**. Tant que `js/firebase-config
 5. **Combat** : chaque attaque compare des forces. **Encercler** une case (l'attaquer en possédant plusieurs cases autour) donne un bonus ; un **long trajet** fatigue ; les cases **proches d'un nid** se défendent mieux. L'aperçu pendant le glisser-déposer annonce le résultat probable.
 6. **Survie** : chaque fourmi mange. En **hiver** (hors tropiques), la récolte chute fortement et la réserve se gâte : prévois des stocks. En famine, les soldates meurent en premier. Si un ennemi prend ton nid, ta reine meurt : élève-en une nouvelle.
 7. **Évolutions** : dépense ta nourriture pour améliorer ta colonie (récolte, greniers, champignonnière, mâchoires, carapace, acide, fécondité, phéromones de piste, galeries), jusqu'au niveau 3.
-8. **Victoire** : la première colonie qui contrôle 30 % des terres gagne l’ère.
+8. **Bouclier** (en ligne) : quitte le jeu plus de 10 minutes et ta colonie s'endort, intouchable mais gelée, jusqu'à ton retour. Le bouton 📨 copie le lien du jeu pour inviter des amis.
+9. **Victoire** : la première colonie qui contrôle 30 % des terres gagne l’ère.
 
 En solo, la partie est sauvegardée dans le navigateur. En ligne, le monde vit sur le serveur. Après une victoire, un nouveau monde (une nouvelle « ère ») naît une heure plus tard. Si ta colonie disparaît, tu peux en refonder une.
 

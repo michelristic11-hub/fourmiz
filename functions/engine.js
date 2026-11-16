@@ -76,4 +76,25 @@ function runOrder(state, world, cfg, order, now) {
   return { state, result: { ok: !!result.ok, reason: result.reason || null } };
 }
 
-module.exports = { runTick, runOrder, advance };
+/**
+ * Nettoie l'état avant écriture dans Firebase : arrondit les nombres à virgule (6 décimales)
+ * et remplace NaN/Infini par 0. Firebase refuse NaN, et des flottants comme 4.4e-16 font échouer
+ * les transactions (« maxretry »).
+ * @returns {number} nombre de valeurs invalides corrigées
+ */
+function clean(x) {
+  let bad = 0;
+  (function walk(o) {
+    for (const k in o) {
+      const v = o[k];
+      if (typeof v === 'number') {
+        if (!Number.isFinite(v)) { o[k] = 0; bad++; }
+        else if (!Number.isInteger(v)) o[k] = Math.round(v * 1e6) / 1e6;
+      } else if (v && typeof v === 'object') walk(v);
+    }
+  })(x);
+  return bad;
+}
+
+module.exports = {
+  clean, runTick, runOrder, advance };

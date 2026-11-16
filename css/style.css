@@ -213,3 +213,4 @@ body.mode-solo .online-only, body.mode-online .solo-only { display: none !import
 .auto-row label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
 .auto-row .hint { margin-top: 2px; }
 #send-caste { flex-wrap: wrap; }
+@media (max-width: 700px) { .wide-only { display: none; } }

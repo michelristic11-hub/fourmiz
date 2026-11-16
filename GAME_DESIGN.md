@@ -16,6 +16,7 @@ Un jeu web multijoueur persistant (temps réel lent, façon OGame) où chaque jo
 ## Règles (valeurs dans `functions/shared/config.js`)
 
 - **Rythme** : en solo, un tick toutes les 0,2 s (une saison = 10 minutes). En ligne, le temps passe 8 fois moins vite (`online.slowdown`) : un tick toutes les 1,6 s, une saison ≈ 1 h 20.
+- **Bouclier d'absence** (en ligne) : sans aucun ordre pendant 375 ticks (≈ 10 min), une colonie humaine s'endort. Elle est inattaquable (les attaques rebondissent), son économie est gelée. Le navigateur envoie un « ping » toutes les 2 minutes tant que la page est ouverte ; tout ordre la réveille.
 - **IA face aux humains** : aucune attaque contre un joueur pendant ses 1 500 premiers ticks (≈ 40 min en ligne), puis seulement avec une force double.
 - **Départ** : une case libre à au moins 4 cases d'une autre colonie, avec 24 ouvrières, 6 soldates et 100 de nourriture.
 - **Castes** : ouvrière (force 1, mange 0,04/tick, coûte 1), soldate (force 3, mange 0,08, coûte 2,5), éclaireuse (force 0,6, mange 0,04, coûte 1,5, deux fois plus rapide). La reine pond selon une répartition choisie (Récolte 85/10/5, Équilibre 60/35/5, Guerre 30/65/5, Exploration 50/20/30).
@@ -41,6 +42,7 @@ games/monde/results/{uid}       résultat du dernier ordre de chaque joueur (acc
 - **`tick`** (Cloud Function planifiée chaque minute) : rattrape le temps écoulé (au plus 600 ticks, soit 2 minutes, au-delà le monde saute le temps perdu) avec `SIM.step` et l'IA, dans une transaction. Elle crée le monde s'il n'existe pas, et recrée un nouveau monde une heure après une victoire.
 - **`order`** (déclenchée à chaque ordre) : valide l'ordre avec `SIM.applyOrder` (bonne colonie, case voisine, assez de fourmiz…), l'applique dans une transaction, puis écrit le résultat.
 - **Client** : écoute `state` en temps réel et envoie des ordres. Il ne calcule rien : impossible de tricher.
+- **Robustesse** : l'état est nettoyé avant chaque écriture (NaN → 0, flottants arrondis). Si la transaction Firebase échoue (`maxretry`), le serveur relit l'état et l'écrit directement.
 - **Sécurité** : les règles n'autorisent que la lecture de l'état et la création d'ordres signés de son propre `uid`.
 - **Le même `sim.js`** tourne dans le navigateur (mode solo) et sur le serveur.
 

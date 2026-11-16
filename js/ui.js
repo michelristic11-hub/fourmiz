@@ -30,7 +30,7 @@
   /**
    * @param {object} cfg FZ.CONFIG
    * @param {object} act { speed, newGame, layMode, caste, evolve, share, sendCaste, autoWorkers, raiseQueen, rally,
-   *                       closeSelection, overlayButton, userButton, goNest, goArmy, goAll }
+   *                       closeSelection, overlayButton, userButton, invite, goNest, goArmy, goAll }
    */
   function createUI(cfg, act) {
     const SIM = root.FZ.SIM;
@@ -71,6 +71,7 @@
     $('#auto-workers').addEventListener('change', (e) => act.autoWorkers(e.target.checked));
     $('#overlay-btn').addEventListener('click', () => act.overlayButton());
     $('#btn-user').addEventListener('click', () => act.userButton());
+    $('#btn-invite').addEventListener('click', () => act.invite());
     $('#go-nest').addEventListener('click', () => act.goNest());
     $('#go-army').addEventListener('click', () => act.goArmy());
     $('#go-all').addEventListener('click', () => act.goAll());
@@ -132,7 +133,9 @@
       const owner = c.owner >= 0 ? state.colonies[c.owner] : null;
       const mine = me && owner && owner.id === me.id;
       const isNest = owner && owner.nest === id && owner.queenAlive;
-      let html = `<div class="title">${owner ? `<span class="dot" style="background:${owner.color}"></span>${esc(owner.name)}` : 'Territoire sauvage'}${isNest ? ' · 👑 nid' : ''}</div>`;
+      const sleeping = owner && SIM.asleep(state, cfg, owner);
+      let html = `<div class="title">${owner ? `<span class="dot" style="background:${owner.color}"></span>${esc(owner.name)}` : 'Territoire sauvage'}${isNest ? ' · 👑 nid' : ''}${sleeping ? ' · 🛡️ endormie' : ''}</div>`;
+      if (sleeping && !mine) html += `<div class="hint">🛡️ Son joueur est absent : cette colonie dort et ne peut pas être attaquée.</div>`;
       html += `<div>${esc(b.name)} · ${owner ? castesLine(c, cfg) : `<b>${fmt(SIM.total(c))}</b> insectes`}</div>`;
       if (mine) {
         const h = SIM.harvestInfo(state, world, cfg, owner, id);
@@ -245,7 +248,7 @@
       const rows = state.colonies.filter((c) => c.alive).sort((a, b) => (b.stats.territories || 0) - (a.stats.territories || 0));
       $('#ranking').innerHTML = rows.slice(0, 15).map((c) =>
         `<li class="${me && c.id === me.id ? 'me' : ''}"><span class="dot" style="background:${c.color}"></span>` +
-        `<span class="name">${esc(c.name)}${c.isAI ? ' <span class="me-badge">IA</span>' : ''}${!c.queenAlive ? ' 💀' : ''}</span>` +
+        `<span class="name">${esc(c.name)}${c.isAI ? ' <span class="me-badge">IA</span>' : ''}${SIM.asleep(state, cfg, c) ? ' 🛡️' : ''}${!c.queenAlive ? ' 💀' : ''}</span>` +
         `<span title="force ${fmt(c.stats.power)}">${fmt(c.stats.territories)} · ${fmt(c.stats.ants)}🐜</span></li>`).join('');
 
       // Journal
