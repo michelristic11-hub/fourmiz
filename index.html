@@ -4,9 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#2b2118">
-  <title>Fourmiz — Conquête du monde</title>
+  <title>Fourmiz — La conquête du jardin</title>
   <link rel="icon" href="fourmiz.ico">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -34,6 +33,8 @@
     <button id="go-nest" title="Aller à mon nid">👑</button>
     <button id="go-army" title="Aller à ma plus grosse armée">🐜</button>
     <button id="go-all" title="Voir tout mon territoire">🗺️</button>
+    <button id="zoom-in" title="Zoomer">＋</button>
+    <button id="zoom-out" title="Dézoomer">－</button>
   </nav>
 
   <aside id="panel" class="collapsed">
@@ -52,7 +53,9 @@
         <div class="stat"><span class="label">Fourmiz</span><span class="value" id="st-ants">0</span></div>
         <div class="stat"><span class="label">Territoires</span><span class="value" id="st-terr">0</span></div>
         <div class="stat"><span class="label">Nourriture</span><span class="value" id="st-food-short">0</span></div>
+        <div class="stat"><span class="label">Score</span><span class="value" id="st-score">0</span></div>
       </div>
+      <div class="hint" id="st-extra"></div>
       <div class="castes" id="st-castes"></div>
       <div class="auto-row">
         <label><input type="checkbox" id="auto-workers" checked> 🔄 Répartition automatique des ouvrières</label>
@@ -78,6 +81,11 @@
       </div>
     </section>
 
+    <section id="missions" class="more">
+      <h3>Missions <span class="hint">⭐ = mission rare</span></h3>
+      <ul id="mission-list"></ul>
+    </section>
+
     <section id="evos" class="more">
       <h3>Évolutions <span class="hint">payées en nourriture</span></h3>
       <div id="evo-list"></div>
@@ -86,27 +94,31 @@
     <section id="help" class="more">
       <h3>Comment jouer</h3>
       <ul class="tips">
+        <li><b>But</b> : faire le meilleur score. Les <b>trésors</b> 🍬🍎🥖🍯 rapportent des points tant que tu les tiens ; les <b>missions</b> aussi. Le monde ne s'arrête jamais : on va et on vient.</li>
+        <li><b>Ta reine</b> vit dans ton nid 👑. Si un ennemi le prend, ta colonie disparaît et ton score entre aux <b>records</b>. Tu peux alors recommencer.</li>
         <li><b>Glisse</b> d'une de tes cases vers une autre pour envoyer des fourmiz, même loin : elles passent par tes galeries.</li>
         <li>Ou <b>touche</b> une de tes cases, puis une case voisine surlignée.</li>
         <li><b>Ouvrières</b> : elles récoltent. Chaque case a un nombre idéal d'ouvrières, et rapporte moins loin du nid.</li>
-        <li><b>Soldates</b> (force 3) : la conquête contre les autres colonies.</li>
-        <li><b>Éclaireuses</b> : deux fois plus rapides, jamais fatiguées et <b>×4 contre les insectes sauvages</b>. Idéales pour prendre les cases libres et pour les expéditions.</li>
-        <li><b>Armée</b> (choix par défaut) envoie soldates, éclaireuses et ouvrières en trop, sans vider la récolte de la case.</li>
-        <li>La <b>répartition automatique</b> déplace les ouvrières inutiles vers les cases qui en manquent.</li>
+        <li><b>Soldates</b> (force 3) : la conquête. <b>Éclaireuses</b> : deux fois plus rapides, jamais fatiguées, ×4 contre les insectes sauvages.</li>
+        <li><b>Scarabées</b> 🪲 (force 14) : à débloquer une fois pour toutes avec la <b>mission rare ⭐</b> (tenir le Scarabée géant au centre du jardin).</li>
+        <li><b>Armée</b> (choix par défaut) envoie soldates, éclaireuses, scarabées et ouvrières en trop, sans vider la récolte de la case.</li>
+        <li>Les <b>flaques</b> et les <b>cailloux</b> sont infranchissables : il faut les contourner. Tout le jardin reste accessible.</li>
         <li class="online-only"><b>Bouclier 🛡️</b> : si tu quittes le jeu plus de 10 minutes, ta colonie s'endort. Personne ne peut l'attaquer, mais elle ne récolte et ne pond plus. Elle se réveille dès que tu reviens.</li>
-        <li><b>Expéditions</b> 🌊 : tu peux glisser vers n'importe quelle case du monde, même sur un autre continent. Le trajet hors de tes galeries est plus lent.</li>
-        <li>Attaquer depuis plusieurs côtés donne un bonus ; un long trajet fatigue.</li>
         <li><b>Rassembler ici</b> fait venir les fourmiz en trop de tout ton territoire. En hiver, la récolte chute et la réserve se gâte : prévois des stocks.</li>
       </ul>
     </section>
 
     <section id="board" class="more">
-      <h3>Classement <span class="hint" id="goal"></span></h3>
+      <h3>Classement <span class="hint">score des colonies en vie</span></h3>
       <ol id="ranking"></ol>
+      <h3>🏆 Records <span class="hint">colonies disparues</span></h3>
+      <ol id="hall"></ol>
     </section>
 
     <section id="legend" class="more">
-      <h3>Biomes <span class="hint">récolte par case</span></h3>
+      <h3>Trésors</h3>
+      <ul id="treasure-list"></ul>
+      <h3>Terrains <span class="hint">récolte par case</span></h3>
       <ul id="legend-list"></ul>
     </section>
 
@@ -127,6 +139,7 @@
         <button data-caste="army" class="on" title="Soldates, éclaireuses et ouvrières en trop : la récolte de la case continue">🛡️ Armée</button>
         <button data-caste="s">⚔️ Soldates</button>
         <button data-caste="e">💨 Éclair.</button>
+        <button data-caste="b" hidden>🪲 Scarab.</button>
         <button data-caste="w">🐜 Ouvr.</button>
         <button data-caste="all">Toutes</button>
       </div>
@@ -138,7 +151,6 @@
       </div>
       <div class="ab-buttons">
         <button id="btn-rally" class="secondary">📣 Rassembler ici</button>
-        <button id="btn-queen" class="primary" hidden>👑 Nouvelle reine</button>
       </div>
       <div class="hint">Glisse depuis cette case vers une autre, ou touche une case surlignée.</div>
     </div>
@@ -155,15 +167,12 @@
     <div class="card">
       <div class="big">🐜</div>
       <h1>Fourmiz</h1>
-      <p id="overlay-text">Chargement du monde…</p>
+      <p id="overlay-text">Chargement du jardin…</p>
       <button id="overlay-btn" class="primary" hidden>Rejouer</button>
     </div>
   </div>
 
   <!-- Bibliothèques (versions figées) -->
-  <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/h3-js@4.1.0/dist/h3-js.umd.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
@@ -172,7 +181,7 @@
   <script src="functions/shared/config.js"></script>
   <script src="functions/shared/sim.js"></script>
   <script src="functions/shared/ai.js"></script>
-  <script src="functions/shared/world.js"></script>
+  <script src="functions/shared/garden.js"></script>
 
   <!-- Client -->
   <script src="js/firebase-config.js"></script>

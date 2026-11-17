@@ -11,12 +11,13 @@
   const isPhone = () => window.matchMedia('(max-width: 720px)').matches;
 
   function castesMix(mix) {
-    return `${Math.round(mix.w * 100)} % ouvrières, ${Math.round(mix.s * 100)} % soldates, ${Math.round(mix.e * 100)} % éclaireuses`;
+    return `${Math.round(mix.w * 100)} % ouvrières, ${Math.round(mix.s * 100)} % soldates, ${Math.round(mix.e * 100)} % éclaireuses` +
+      (mix.b ? `, ${Math.round(mix.b * 100)} % scarabées` : '');
   }
 
   /** « 🐜 12 · ⚔️ 4 · 💨 1 » pour un groupe de fourmiz. */
   function castesLine(g, cfg) {
-    return ['w', 's', 'e'].filter((k) => (g[k] || 0) > 0).map((k) => `${cfg.castes[k].icon} ${fmt(g[k])}`).join(' · ') || '0';
+    return ['w', 's', 'e', 'b'].filter((k) => (g[k] || 0) > 0).map((k) => `${cfg.castes[k].icon} ${fmt(g[k])}`).join(' · ') || '0';
   }
 
   /** Durée lisible à partir d'un nombre de ticks. */
@@ -29,7 +30,7 @@
 
   /**
    * @param {object} cfg FZ.CONFIG
-   * @param {object} act { speed, newGame, layMode, caste, evolve, share, sendCaste, autoWorkers, raiseQueen, rally,
+   * @param {object} act { speed, newGame, layMode, caste, evolve, share, sendCaste, autoWorkers, rally, zoomIn, zoomOut,
    *                       closeSelection, overlayButton, userButton, invite, goNest, goArmy, goAll }
    */
   function createUI(cfg, act) {
@@ -65,7 +66,6 @@
       if (b && !b.disabled) act.evolve(b.dataset.evo);
     });
     $('#btn-new').addEventListener('click', () => { if (confirmNew()) act.newGame(); });
-    $('#btn-queen').addEventListener('click', () => act.raiseQueen());
     $('#btn-rally').addEventListener('click', () => act.rally());
     $('#ab-close').addEventListener('click', () => act.closeSelection());
     $('#auto-workers').addEventListener('change', (e) => act.autoWorkers(e.target.checked));
@@ -75,6 +75,8 @@
     $('#go-nest').addEventListener('click', () => act.goNest());
     $('#go-army').addEventListener('click', () => act.goArmy());
     $('#go-all').addEventListener('click', () => act.goAll());
+    $('#zoom-in').addEventListener('click', () => act.zoomIn());
+    $('#zoom-out').addEventListener('click', () => act.zoomOut());
 
     // Panneau repliable (téléphone)
     const panel = $('#panel');
@@ -94,10 +96,16 @@
     window.addEventListener('resize', syncPanelHeight);
     if (window.ResizeObserver) new ResizeObserver(syncPanelHeight).observe(panel);
 
-    // Légende des biomes
+    // Légende des terrains et des trésors
     $('#legend-list').innerHTML = Object.keys(cfg.biomes).map((k) => {
       const b = cfg.biomes[k];
       return `<li><span class="sw" style="background:${b.color}"></span>${esc(b.name)}<span class="val">${fmt(b.food, 2)}</span></li>`;
+    }).join('') + Object.keys(cfg.obstacles).map((k) =>
+      `<li><span class="sw" style="background:${cfg.obstacles[k].color}"></span>${esc(cfg.obstacles[k].name)}<span class="val">✖</span></li>`).join('');
+    const perMin = 60 / cfg.time.tickSeconds;
+    $('#treasure-list').innerHTML = Object.keys(cfg.treasures.types).map((k) => {
+      const t = cfg.treasures.types[k];
+      return `<li><span class="ticon">${t.icon}</span>${esc(t.name)}<span class="val">+${fmt(t.points * perMin)} pts/min</span></li>`;
     }).join('');
 
     let confirmArmed = 0;
@@ -117,12 +125,28 @@
       toastTimer = setTimeout(() => { toast.hidden = true; }, 3000);
     }
 
-    function seasonLabel(state, world, me) {
-      const lat = me && me.nest ? world.cells[me.nest].lat : 45;
-      const s = SIM.seasonAt(state.tick, lat, cfg);
+    function seasonLabel(state) {
+      const s = SIM.seasonAt(state.tick, 45, cfg);
       const icon = ['🌱', '☀️', '🍂', '❄️'][s.index];
-      const era = state.era > 1 ? `Ère ${state.era} · ` : '';
-      return s.tropical ? `🌴 Tropiques · ${era}An ${s.year}` : `${icon} ${s.name} · ${era}An ${s.year}`;
+      return `${icon} ${s.name} · An ${s.year}`;
+    }
+
+    /** Texte d'une mission, avec sa progression. */
+    function missionHTML(state, world, me, m) {
+      const def = cfg.missions.list[m.k];
+      if (!def) return '';
+      const T = cfg.treasures.types;
+      const text = def.text
+        .replace('{goal}', fmt(m.goal))
+        .replace('{biome}', m.biome && cfg.biomes[m.biome] ? cfg.biomes[m.biome].name.toLowerCase() : '')
+        .replace('{treasure}', m.treasure && T[m.treasure] ? `${T[m.treasure].icon} ${T[m.treasure].name}` : '')
+        .replace('{minutes}', fmt((m.goal * cfg.time.tickSeconds) / 60));
+      const p = Math.max(0, SIM.missionProgress(state, world, cfg, me, m));
+      const pct = Math.min(100, (100 * p) / Math.max(1, m.goal));
+      const shown = m.k === 'beetle' ? `${fmt((p * cfg.time.tickSeconds) / 60, 1)} / ${fmt((m.goal * cfg.time.tickSeconds) / 60)} min` : `${fmt(Math.min(p, m.goal))} / ${fmt(m.goal)}`;
+      const reward = `+${def.points} pts` + (def.food ? ` · +${def.food} 🍯` : '') + (def.unlock ? ' · 🪲 débloque les scarabées' : '');
+      return `<li class="mission${def.rare ? ' rare' : ''}"><div class="m-text">${esc(text)}</div>` +
+        `<div class="bar"><div style="width:${pct}%"></div></div><div class="hint">${shown} · ${reward}</div></li>`;
     }
 
     /** Fiche d'une case (barre d'action et infobulle). */
@@ -135,6 +159,12 @@
       const isNest = owner && owner.nest === id && owner.queenAlive;
       const sleeping = owner && SIM.asleep(state, cfg, owner);
       let html = `<div class="title">${owner ? `<span class="dot" style="background:${owner.color}"></span>${esc(owner.name)}` : 'Territoire sauvage'}${isNest ? ' · 👑 nid' : ''}${sleeping ? ' · 🛡️ endormie' : ''}</div>`;
+      const tr = SIM.treasureAt(world, id);
+      if (tr) {
+        const T = cfg.treasures.types[tr];
+        const perMin = 60 / cfg.time.tickSeconds;
+        html += `<div class="treasure">${T.icon} <b>${esc(T.name)}</b> : +${fmt(T.points * perMin, 1)} points/min et +${fmt(T.food / cfg.time.tickSeconds, 1)} nourriture/s pour qui le tient${tr === 'beetle' ? ' · ⭐ lié à la mission rare' : ''}</div>`;
+      }
       if (sleeping && !mine) html += `<div class="hint">🛡️ Son joueur est absent : cette colonie dort et ne peut pas être attaquée.</div>`;
       html += `<div>${esc(b.name)} · ${owner ? castesLine(c, cfg) : `<b>${fmt(SIM.total(c))}</b> insectes`}</div>`;
       if (mine) {
@@ -167,18 +197,18 @@
 
     /**
      * Met à jour tout l'écran.
-     * @param {object} view { me, selected, inspected, mode, hadColony, joinPending, net: { connected } }
+     * @param {object} view { me, uid, selected, inspected, mode, hadColony, joinPending, net: { connected } }
      */
     function update(state, world, view) {
       const me = view.me;
       const online = view.mode === 'online';
-      $('#season').textContent = seasonLabel(state, world, me);
+      $('#season').textContent = seasonLabel(state);
 
       if (online) {
         const net = view.net || {};
         const el = $('#net');
         el.classList.toggle('off', !net.connected);
-        el.textContent = !net.connected ? '🔴 Hors ligne' : state.phase === 'over' ? '🏁 Fin de l’ère' : '🟢 En direct';
+        el.textContent = !net.connected ? '🔴 Hors ligne' : '🟢 En direct';
       }
 
       // Fonder une colonie / sa colonie
@@ -186,11 +216,12 @@
       $('#colony').hidden = !me;
       $('#evos').hidden = !me;
       $('#help').hidden = !me;
-      $('#mapbtns').hidden = !me;
+      $('#missions').hidden = !me;
       if (!me) {
-        $('#join-text').textContent = view.hadColony
-          ? 'Ta colonie a disparu. Choisis une nouvelle case libre pour recommencer.'
-          : 'Choisis un nom, puis touche une case libre de la carte pour y installer ta reine et tes premières fourmiz.';
+        const dead = view.uid ? state.colonies.filter((c) => c.uid === view.uid && !c.alive).pop() : null;
+        $('#join-text').textContent = dead || view.hadColony
+          ? `Ta reine est morte : ta colonie a disparu${dead ? ` (score ${fmt(dead.score)})` : ''}. Choisis une nouvelle case libre pour recommencer.`
+          : 'Choisis un nom, puis touche une case libre (pas un trésor) pour y installer ta reine et tes premières fourmiz.';
       }
       if (me) {
         const s = me.stats;
@@ -198,6 +229,14 @@
         $('#col-name').textContent = me.name;
         $('#st-ants').textContent = fmt(s.ants);
         $('#st-terr').textContent = fmt(s.territories);
+        $('#st-score').textContent = fmt(me.score);
+        const perMin = 60 / cfg.time.tickSeconds;
+        const unl = me.unlocks && me.unlocks.beetle;
+        $('#st-extra').innerHTML = (s.points > 0 ? `🏅 +${fmt(s.points * perMin, 1)} pts/min grâce à tes trésors · ` : '🏅 Prends des trésors pour gagner des points · ') +
+          (unl ? '🪲 Scarabées débloqués (ponte Équilibre ou Guerre)' : '🪲 Scarabées : à débloquer par la mission rare ⭐');
+        document.querySelector('#send-caste [data-caste="b"]').hidden = !unl;
+        const mh = (me.missions || []).map((m) => missionHTML(state, world, me, m)).join('');
+        if ($('#mission-list').dataset.html !== mh) { $('#mission-list').innerHTML = mh; $('#mission-list').dataset.html = mh; }
         $('#st-castes').innerHTML = `${castesLine(s, cfg)} <span class="hint">· force ${fmt(s.power)}</span>`;
         const autoBox = $('#auto-workers');
         if (document.activeElement !== autoBox) autoBox.checked = me.autoWorkers !== false;
@@ -207,7 +246,7 @@
         const net = s.net || 0;
         const perS = 1 / cfg.time.tickSeconds;
         $('#st-food-short').innerHTML = `${fmt(me.food)} <span class="${net >= 0 ? 'pos' : 'neg'}" style="font-size:12px">${net >= 0 ? '▲' : '▼'}</span>`;
-        $('#st-queen').textContent = me.queenAlive ? '👑' : '💀 (morte)';
+        $('#st-queen').textContent = '👑';
         $('#st-food').textContent = `${fmt(me.food)} / ${fmt(s.cap)}`;
         $('#food-bar').style.width = Math.min(100, (100 * me.food) / Math.max(1, s.cap)) + '%';
         $('#st-net').innerHTML =
@@ -217,7 +256,7 @@
           (me.food <= 0 && net < 0 ? ' <span class="neg">FAMINE</span>' : '');
         document.querySelectorAll('#lay-modes button').forEach((b) => b.classList.toggle('on', b.dataset.mode === me.layMode));
         document.querySelectorAll('#caste-presets button').forEach((b) => b.classList.toggle('on', b.dataset.preset === me.caste));
-        let lay = me.queenAlive ? `≈ ${fmt(s.layRate * perS, 1)} œufs par seconde au nid (${castesMix(cfg.castePresets[me.caste].mix)})` : 'Pas de reine : aucune ponte. Choisis une case avec assez de fourmiz pour en élever une.';
+        let lay = `≈ ${fmt(s.layRate * perS, 1)} œufs par seconde au nid (${castesMix(SIM.mixFor(cfg, me))})`;
         if (me.queenAlive && me.nest) {
           const season = SIM.seasonAt(state.tick, world.cells[me.nest].lat, cfg);
           if (!season.tropical && season.index === 3) lay += ' (hiver : ponte ralentie)';
@@ -233,23 +272,17 @@
       if (info) {
         $('#ab-info').innerHTML = cellCard(state, world, me, info);
         $('#ab-actions').hidden = !sel;
-        if (sel) {
-          const c = state.cells[sel];
-          const q = cfg.queen.newQueen;
-          $('#btn-queen').hidden = me.queenAlive;
-          $('#btn-queen').disabled = !(SIM.total(c) >= q.minAnts && me.food >= q.food);
-          $('#btn-queen').title = `${q.food} de nourriture et ${q.minAnts} fourmiz sur la case`;
-        }
       }
 
       // Classement
-      const goal = Math.ceil(cfg.victory.landShare * state.landCount);
-      $('#goal').textContent = `objectif : ${fmt(goal)} cases`;
-      const rows = state.colonies.filter((c) => c.alive).sort((a, b) => (b.stats.territories || 0) - (a.stats.territories || 0));
+      const rows = state.colonies.filter((c) => c.alive).sort((a, b) => (b.score || 0) - (a.score || 0));
       $('#ranking').innerHTML = rows.slice(0, 15).map((c) =>
         `<li class="${me && c.id === me.id ? 'me' : ''}"><span class="dot" style="background:${c.color}"></span>` +
         `<span class="name">${esc(c.name)}${c.isAI ? ' <span class="me-badge">IA</span>' : ''}${SIM.asleep(state, cfg, c) ? ' 🛡️' : ''}${!c.queenAlive ? ' 💀' : ''}</span>` +
-        `<span title="force ${fmt(c.stats.power)}">${fmt(c.stats.territories)} · ${fmt(c.stats.ants)}🐜</span></li>`).join('');
+        `<span title="${fmt(c.stats.territories)} cases · ${fmt(c.stats.ants)} fourmiz · force ${fmt(c.stats.power)}">🏅 ${fmt(c.score)}</span></li>`).join('');
+      $('#hall').innerHTML = (state.hall || []).map((h) =>
+        `<li><span class="dot" style="background:${h.color}"></span><span class="name">${esc(h.name)}${h.ai ? ' <span class="me-badge">IA</span>' : ''}</span><span>🏅 ${fmt(h.score)}</span></li>`).join('') ||
+        '<li class="hint">Personne pour l’instant : les colonies disparues y laissent leur score.</li>';
 
       // Journal
       $('#log').innerHTML = state.log.slice(-30).reverse().map((l) => {
@@ -264,7 +297,7 @@
       if (placing) {
         $('#placement-text').textContent = view.joinPending
           ? '⏳ Fondation de ta colonie en cours…'
-          : '👑 Touche une case libre de la terre ferme pour fonder ta colonie.';
+          : '👑 Touche une case libre du jardin pour fonder ta colonie.';
       }
 
       // Fin d'une ère

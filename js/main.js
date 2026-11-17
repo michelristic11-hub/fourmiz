@@ -90,7 +90,7 @@
     const p = SIM.findPath(state, world, cfg, m.id, from, to);
     if (!p.ok) return ui.say(p.reason);
     const d = describeSend(m, p.path, g, p.jump);
-    send({ type: 'send', from, to, w: g.w, s: g.s, e: g.e }, d.text);
+    send({ type: 'send', from, to, w: g.w, s: g.s, e: g.e, b: g.b || 0 }, d.text);
   }
 
   function onClick(id) {
@@ -126,7 +126,7 @@
       }
     }
     pendingJump = null;
-    if (mine(id, m)) selected = id;
+    if (mine(id, m)) { selected = id; gm.ensureVisible(id); }
     else { selected = null; inspected = id; }
   }
 
@@ -175,7 +175,6 @@
       send({ type: 'evolve', key }, `${e.icon} ${e.name} : niveau supérieur !`);
     },
     newGame() { selected = inspected = null; hadColony = false; gm.reset(); backend.newGame(); ui.hideOverlay(); },
-    raiseQueen() { if (selected) send({ type: 'queen', cell: selected }, '👑 Une nouvelle reine s’installe.'); },
     rally() {
       if (!selected) return;
       send({ type: 'rally', cell: selected }, '📣 Rassemblement : les fourmiz en trop arrivent par tes galeries.');
@@ -197,7 +196,7 @@
     goNest() {
       const m = me();
       if (m && m.nest) { gm.flyTo(m.nest, 5); selected = m.nest; dirty = true; }
-      else ui.say('Tu n’as plus de nid : élève une nouvelle reine.');
+      else ui.say('Tu n’as pas de nid.');
     },
     goArmy() {
       const ids = ownCells();
@@ -207,11 +206,17 @@
       selected = best;
       dirty = true;
     },
-    goAll() { gm.fitCells(ownCells()); },
+    goAll() { const ids = ownCells(); if (ids.length) gm.fitCells(ids); else gm.reset(); },
+    zoomIn() { gm.zoomBy(1.5); },
+    zoomOut() { gm.zoomBy(1 / 1.5); },
   };
 
   function onState(s) {
     const firstTime = !state && s;
+    // Nouvelle carte publiée pendant que la page était ouverte : on recharge pour la dessiner.
+    if (s && s.mapSeed != null && s.mapSeed !== world.seed && mode === 'online') {
+      if (!sessionStorage.getItem('fz-reload')) { sessionStorage.setItem('fz-reload', '1'); location.reload(); return; }
+    } else if (s) sessionStorage.removeItem('fz-reload');
     state = s;
     if (!state) {
       if (mode === 'online' && backend.user) ui.overlay('Le monde est en train de naître… Il apparaîtra dans moins d’une minute.');
@@ -254,7 +259,7 @@
   }
   function renderUI() {
     ui.update(state, world, {
-      me: me(), selected, inspected, mode, hadColony, joinPending,
+      me: me(), uid: backend.uid, selected, inspected, mode, hadColony, joinPending,
       net: mode === 'online' ? { connected: backend.connected } : null,
     });
   }
@@ -263,16 +268,16 @@
   async function boot() {
     ui = FZ.UI.createUI(cfg, actions);
     try { document.getElementById('join-name').value = localStorage.getItem(NAME_KEY) || ''; } catch (e) { /* facultatif */ }
-    if (!window.maplibregl || !window.h3 || !window.topojson || (mode === 'online' && !window.firebase)) {
+    if (mode === 'online' && !window.firebase) {
       ui.overlay('Impossible de charger les bibliothèques. Vérifie ta connexion internet puis recharge la page.');
       return;
     }
     try {
       const t0 = performance.now();
-      const land = await FZ.WORLD.loadLand(window.topojson);
-      world = FZ.WORLD.buildWorld(window.h3, land, cfg);
-      console.info(`Monde : ${world.ids.length} cases en ${Math.round(performance.now() - t0)} ms`);
-      gm = await FZ.MAP.createMap(document.getElementById('map'), world, cfg, Object.assign({
+      const seed = mode === 'online' ? cfg.online.mapSeed : (FZ.BACKEND.savedSeed() || ((Math.random() * 2 ** 31) >>> 0) || 1);
+      world = FZ.GARDEN.buildGarden(seed, cfg);
+      console.info(`Jardin : ${world.ids.length} cases en ${Math.round(performance.now() - t0)} ms`);
+      gm = FZ.MAP.createMap(document.getElementById('map'), world, cfg, Object.assign({
         click: onClick,
         hover(id, point) { hoverId = id; hoverPoint = point; if (state) ui.hover(state, world, me(), id, point); },
       }, drag));
@@ -315,12 +320,12 @@
     backend.start(onState);
     setInterval(loop, 50);
     if (mode === 'online') {
-      // Présence : tant que la page est ouverte, un petit « ping » garde le bouclier d'absence éteint.
+      // Présence : tant que la page est ouverte, un petit signal garde le bouclier d'absence éteint.
       let lastPing = 0;
       const ping = () => {
-        if (document.hidden || !me() || Date.now() - lastPing < 20000) return;
+        if (document.hidden || !backend.uid || Date.now() - lastPing < 20000) return;
         lastPing = Date.now();
-        backend.send({ type: 'ping' });
+        backend.presence();
       };
       setInterval(ping, 120000);
       setTimeout(ping, 3000);

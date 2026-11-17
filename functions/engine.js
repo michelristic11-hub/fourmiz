@@ -47,22 +47,47 @@ function advance(state, world, cfg, now) {
 }
 
 function freshWorld(world, cfg, now, era) {
-  const s = SIM.createWorldState(world, cfg, { aiCount: cfg.online.aiCount, era, now });
+  const s = SIM.createWorldState(world, cfg, { aiCount: cfg.online.aiCount, era, now, mapSeed: world.seed });
   s.tickMs = SIM.tickMs(cfg);
   return s;
 }
 
 /**
- * Appelé chaque minute : crée le monde s'il n'existe pas, le fait avancer,
- * et en recrée un nouveau quelque temps après une victoire.
+ * Appelé chaque minute : crée le monde s'il n'existe pas (ou si la carte a changé), puis le fait avancer.
+ * Le monde est permanent : il n'y a plus de fin de partie.
  */
-function runTick(state, world, cfg, now) {
-  if (!state || state.landCount !== world.ids.length || (state.worldVersion || 1) !== cfg.online.worldVersion) return freshWorld(world, cfg, now, state ? (state.era || 0) + 1 : 1);
-  advance(state, world, cfg, now);
-  if (state.phase === 'over' && now - state.overAt >= cfg.online.resetAfterMinutes * 60000) {
-    return freshWorld(world, cfg, now, (state.era || 1) + 1);
+function runTick(state, world, cfg, now, presence) {
+  if (!state || state.landCount !== world.ids.length || (state.worldVersion || 1) !== cfg.online.worldVersion ||
+      (world.seed != null && state.mapSeed !== world.seed)) {
+    return freshWorld(world, cfg, now, state ? (state.era || 0) + 1 : 1);
   }
+  applyPresence(state, cfg, presence);
+  advance(state, world, cfg, now);
+  applyPresence(state, cfg, presence);
   return state;
+}
+
+/**
+ * Présence des joueurs (games/<id>/presence/<uid> = heure du dernier signal du navigateur) :
+ * la colonie est « vue » à ce moment-là, ce qui garde son bouclier d'absence éteint.
+ */
+function applyPresence(state, cfg, presence) {
+  if (!presence || !state || !state.startedAt) return;
+  SIM.hydrate(state);
+  for (const col of state.colonies) {
+    if (!col.alive || col.isAI || !col.uid) continue;
+    const ts = presence[col.uid];
+    if (typeof ts !== 'number') continue;
+    const t = Math.min(state.tick, SIM.tickAt(state, cfg, ts));
+    if (col.lastSeenTick == null || t > col.lastSeenTick) col.lastSeenTick = t;
+  }
+}
+
+/** Le serveur peut-il dormir ? Oui si aucun joueur n'a donné signe de vie depuis online.idleMinutes. */
+function isIdle(presence, cfg, now) {
+  let last = 0;
+  for (const uid in presence || {}) if (typeof presence[uid] === 'number' && presence[uid] > last) last = presence[uid];
+  return now - last > cfg.online.idleMinutes * 60000;
 }
 
 /**
@@ -96,5 +121,4 @@ function clean(x) {
   return bad;
 }
 
-module.exports = {
-  clean, runTick, runOrder, advance };
+module.exports = { clean, runTick, runOrder, advance, applyPresence, isIdle };

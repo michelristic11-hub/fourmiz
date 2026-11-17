@@ -2,7 +2,11 @@
  * Fourmiz — serveur (Firebase Cloud Functions, 2e génération).
  *
  *  - tick  : toutes les minutes, rattrape le temps écoulé (production, combats, IA, saisons).
+ *            S'il n'y a aucun joueur depuis online.idleMinutes, il ne fait rien (le serveur dort : presque gratuit).
  *  - order : à chaque ordre envoyé par un joueur, rattrape le temps puis valide et applique l'ordre.
+ *
+ * Autres chemins : games/<id>/presence/<uid> (signal « je suis là » des navigateurs, écrit directement),
+ * users/<uid>/unlocks (combattants débloqués, gardés d'une colonie à l'autre).
  *
  * Le monde avance en continu (un tick toutes les 2 s) : il n'y a pas de tours.
  *
@@ -14,11 +18,8 @@ const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { onValueCreated } = require('firebase-functions/v2/database');
 const { setGlobalOptions, logger } = require('firebase-functions/v2');
 const admin = require('firebase-admin');
-const h3 = require('h3-js');
-const topojson = require('topojson-client');
-const land = require('world-atlas/land-110m.json');
 const CONFIG = require('./shared/sim.js').onlineConfig(require('./shared/config.js'));
-const WORLD = require('./shared/world.js');
+const GARDEN = require('./shared/garden.js');
 const ENGINE = require('./engine.js');
 
 /** Doit être la région de ta Realtime Database (us-central1 par défaut). */
@@ -28,10 +29,17 @@ setGlobalOptions({ region: REGION, memory: '1GiB', cpu: 1, maxInstances: 3 });
 admin.initializeApp();
 
 let world = null;
-/** Le monde (grille H3 + biomes) est construit une fois par instance, au démarrage. */
+/** La carte « jardin » est recalculée une fois par instance (quelques millisecondes). */
 function getWorld() {
-  if (!world) world = WORLD.buildWorld(h3, topojson.feature(land, land.objects.land), CONFIG);
+  if (!world) world = GARDEN.buildGarden(CONFIG.online.mapSeed, CONFIG);
   return world;
+}
+
+/** Enregistre sur le compte des joueurs les combattants qu'ils viennent de débloquer. */
+async function saveUnlocks(state) {
+  const ev = state && state.unlockEvents ? Object.values(state.unlockEvents) : [];
+  await Promise.all(ev.filter((e) => e && e.uid && e.key).map((e) =>
+    admin.database().ref(`users/${e.uid}/unlocks/${e.key}`).set(true)));
 }
 
 const statePath = (gameId) => `games/${gameId}/state`;
@@ -63,9 +71,13 @@ async function updateState(ref, update) {
 }
 
 exports.tick = onSchedule({ schedule: 'every 1 minutes', timeoutSeconds: 120, maxInstances: 1 }, async () => {
-  const w = getWorld();
+  const gid = CONFIG.online.gameId;
   const now = Date.now();
-  const s = await updateState(admin.database().ref(statePath(CONFIG.online.gameId)), (cur) => ENGINE.runTick(cur, w, CONFIG, now));
+  const presence = (await admin.database().ref(`games/${gid}/presence`).once('value')).val() || {};
+  if (ENGINE.isIdle(presence, CONFIG, now)) return; // personne : le monde attend (il rattrapera au plus quelques minutes)
+  const w = getWorld();
+  const s = await updateState(admin.database().ref(statePath(gid)), (cur) => ENGINE.runTick(cur, w, CONFIG, now, presence));
+  await saveUnlocks(s);
   if (s) logger.info(`Ère ${s.era} · tick ${s.tick} · ${s.colonies ? Object.keys(s.colonies).length : 0} colonies`);
 });
 
@@ -77,9 +89,12 @@ exports.order = onValueCreated({ ref: '/games/{gameId}/orders/{orderId}' }, asyn
   if (gameId !== CONFIG.online.gameId || !order || !order.uid) return;
 
   const w = getWorld();
+  // Les combattants débloqués viennent du compte du joueur, jamais du navigateur
+  delete order.unlocks;
+  if (order.type === 'join') order.unlocks = (await db.ref(`users/${order.uid}/unlocks`).once('value')).val() || {};
   const now = Date.now();
   let result = { ok: false, reason: 'Ordre non traité.' };
-  await updateState(db.ref(statePath(gameId)), (cur) => {
+  const after = await updateState(db.ref(statePath(gameId)), (cur) => {
     // Premier passage : le cache local est vide, Firebase rappelle avec la vraie valeur.
     if (cur === null) {
       result = { ok: false, reason: 'Le monde est en cours de création, réessaie dans une minute.' };
@@ -89,6 +104,7 @@ exports.order = onValueCreated({ ref: '/games/{gameId}/orders/{orderId}' }, asyn
     result = out.result;
     return out.result.ok ? out.state : undefined; // undefined = ordre refusé, rien n'est écrit
   });
+  await saveUnlocks(after);
   await db.ref(`games/${gameId}/results/${order.uid}`).set({
     orderId,
     type: String(order.type || ''),

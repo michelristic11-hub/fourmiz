@@ -34,7 +34,8 @@ body {
   font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   -webkit-tap-highlight-color: transparent;
 }
-#map { position: absolute; inset: 0; background: #b9d3df; }
+#map { position: absolute; inset: 0; background: #3b2e22; overflow: hidden; }
+#map canvas { display: block; touch-action: none; user-select: none; -webkit-user-select: none; }
 button { font: inherit; color: inherit; cursor: pointer; }
 h1, h2, h3 { margin: 0; }
 h2 { font-size: 16px; display: flex; align-items: center; gap: 8px; }
@@ -82,7 +83,7 @@ body.mode-solo .online-only, body.mode-online .solo-only { display: none !import
 #join input:focus { outline: 2px solid var(--accent); border-color: transparent; }
 #join h2 { margin-bottom: 6px; }
 #join p { margin: 0 0 10px; }
-.stat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 10px 0 4px; }
+.stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 10px 0 4px; }
 .stat { display: flex; flex-direction: column; min-width: 0; }
 .stat .value { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .food { margin-top: 10px; }
@@ -182,7 +183,6 @@ body.mode-solo .online-only, body.mode-online .solo-only { display: none !import
   #mode-link { display: none; }
   #mapbtns { top: 56px; left: 8px; right: auto; flex-direction: row; }
   #mapbtns button { width: 42px; height: 42px; font-size: 18px; }
-  .maplibregl-ctrl-bottom-right { display: none; }
 
   #panel {
     top: auto; left: 0; right: 0; bottom: 0; width: auto; max-height: 70vh;
@@ -204,6 +204,19 @@ body.mode-solo .online-only, body.mode-online .solo-only { display: none !import
     bottom: calc(var(--panel-h) + 8px);
   }
   .seg button { min-height: 42px; font-size: 14px; }
+  /* Téléphone : barre d'action et panneau replié plus compacts, pour garder la carte visible */
+  #actionbar { padding: 8px 10px; }
+  #ab-info { font-size: 13px; }
+  #ab-info .hint, #ab-info .treasure { font-size: 11px; }
+  #ab-actions { margin-top: 4px; }
+  #ab-actions > .label, #ab-actions > .hint { display: none; }
+  #actionbar .seg { margin-bottom: 4px; }
+  #actionbar .seg button { min-height: 34px; font-size: 13px; padding: 4px 6px; }
+  #send-caste { flex-wrap: nowrap; overflow-x: auto; }
+  #send-caste button { white-space: nowrap; flex: 0 0 auto; }
+  .ab-buttons { margin: 2px 0 0; }
+  .ab-buttons button { min-height: 34px; padding: 4px 8px; }
+  #panel.collapsed #st-extra, #panel.collapsed .castes, #panel.collapsed .auto-row { display: none; }
   body.panel-open #actionbar, body.panel-open #placement, body.panel-open #mapbtns { display: none !important; }
   #toast { top: 104px !important; left: 8px !important; right: 64px; transform: none !important; max-width: none !important; }
 }
@@ -214,3 +227,20 @@ body.mode-solo .online-only, body.mode-online .solo-only { display: none !import
 .auto-row .hint { margin-top: 2px; }
 #send-caste { flex-wrap: wrap; }
 @media (max-width: 700px) { .wide-only { display: none; } }
+
+/* Missions, trésors, records */
+#missions ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.mission { background: rgba(0,0,0,.04); border-radius: 10px; padding: 8px 10px; }
+.mission .m-text { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+.mission .bar { height: 6px; background: rgba(0,0,0,.1); border-radius: 3px; overflow: hidden; margin-bottom: 3px; }
+.mission .bar div { height: 100%; background: var(--accent); }
+.mission.rare { background: linear-gradient(135deg, rgba(255,210,63,.35), rgba(255,127,17,.2)); outline: 1px solid rgba(255,170,0,.6); }
+.treasure { font-size: 12px; margin: 2px 0 4px; }
+.ticon { width: 18px; display: inline-block; text-align: center; margin-right: 6px; }
+#treasure-list, #hall { list-style: none; padding: 0; margin: 0 0 10px; }
+#treasure-list li { display: flex; align-items: center; font-size: 13px; padding: 2px 0; }
+#treasure-list .val { margin-left: auto; color: var(--muted); font-size: 12px; }
+#hall li { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 2px 0; }
+#hall .name { flex: 1; }
+#st-extra { margin: 4px 0; }
+@media (prefers-color-scheme: dark) { .mission { background: rgba(255,255,255,.06); } .mission .bar { background: rgba(255,255,255,.12); } }

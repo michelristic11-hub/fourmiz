@@ -12,10 +12,11 @@
       tickSeconds: 0.2,
     },
 
-    /** Résolution H3 des territoires (3 ≈ 12 000 cases de terre ferme, ~12 000 km² chacune). */
-    h3Resolution: 3,
-    /** On ignore l'Antarctique (latitude du centre de la case en dessous de cette valeur). */
-    minLatitude: -58,
+    /**
+     * Carte « jardin » générée (voir garden.js) : largeur × hauteur en cases hexagonales.
+     * waterShare / rockShare : part des cases en flaques / en cailloux.
+     */
+    map: { width: 52, height: 36, waterShare: 0.08, rockShare: 0.07, cellsPerTreasure: 140 },
 
     start: {
       ants: 30,            // fourmiz de départ (réparties selon startCastes)
@@ -32,6 +33,8 @@
       w: { name: 'Ouvrière', plural: 'ouvrières', icon: '🐜', power: 1, upkeep: 0.04, cost: 1, speed: 1 },
       s: { name: 'Soldate', plural: 'soldates', icon: '⚔️', power: 3, upkeep: 0.08, cost: 2.5, speed: 1 },
       e: { name: 'Éclaireuse', plural: 'éclaireuses', icon: '💨', power: 0.6, upkeep: 0.04, cost: 1.5, speed: 0.5, wildBonus: 4 },
+      /** Scarabée : combattant spécial, à débloquer par la mission rare. layShare = part des œufs une fois débloqué. */
+      b: { name: 'Scarabée', plural: 'scarabées', icon: '🪲', power: 14, upkeep: 0.25, cost: 18, speed: 1.6, layShare: 0.03, unlock: 'beetle' },
     },
     /** Répartitions de ponte proposées au joueur (part de chaque caste). */
     castePresets: {
@@ -53,8 +56,6 @@
         normal: { label: 'Normale', rate: 1, cost: 1 },
         intense: { label: 'Intensive', rate: 2, cost: 1.5 },
       },
-      /** Élever une nouvelle reine (si la reine est morte). */
-      newQueen: { food: 150, minAnts: 25 },
       /** Ponte réduite pendant l'hiver hors tropiques (hibernation). */
       winterLayFactor: 0.4,
     },
@@ -120,13 +121,54 @@
       tropicsLatitude: 23,
     },
 
-    victory: {
-      /** Part des cases de terre ferme à contrôler pour gagner. */
-      landShare: 0.3,
+    /**
+     * Pas de fin de partie : le monde est permanent, on va et on vient. Si la reine meurt (nid pris),
+     * la colonie disparaît et on recommence ; son score entre au tableau des records.
+     * Points : trésors tenus (par tick), missions réussies, cases conquises.
+     */
+    score: { perWildCapture: 1, perEnemyCapture: 3, hallSize: 10 },
+
+    /**
+     * Trésors : cases spéciales gardées par beaucoup d'insectes. Tant qu'on les tient, ils rapportent
+     * des points et de la nourriture à chaque tick. Le scarabée géant est unique (au centre de la carte).
+     */
+    treasures: {
+      minDistance: 7,
+      types: {
+        sugar:  { name: 'Morceau de sucre', icon: '🍬', points: 0.05, food: 1.2, guard: 45 },
+        apple:  { name: 'Pomme tombée', icon: '🍎', points: 0.03, food: 2.0, guard: 35 },
+        crumbs: { name: 'Miettes de pique-nique', icon: '🥖', points: 0.04, food: 1.0, guard: 25 },
+        honey:  { name: 'Goutte de miel', icon: '🍯', points: 0.08, food: 0.6, guard: 60 },
+        beetle: { name: 'Scarabée géant', icon: '🪲', points: 0.12, food: 1.5, guard: 160, unique: true },
+      },
+    },
+
+    /**
+     * Missions : chaque colonie humaine a toujours 3 missions. Une mission réussie rapporte des points
+     * et de la nourriture, puis une nouvelle la remplace. La mission rare débloque le scarabée
+     * pour toutes les colonies suivantes du joueur.
+     */
+    missions: {
+      slots: 3,
+      checkEvery: 10,
+      rareChance: 0.2,
+      list: {
+        expand:   { text: 'Atteins {goal} territoires', points: 30, food: 80 },
+        biome:    { text: 'Possède {goal} cases de {biome}', points: 25, food: 60 },
+        army:     { text: 'Rassemble {goal} soldates', points: 25, food: 50 },
+        wild:     { text: 'Prends {goal} cases aux insectes sauvages', points: 20, food: 60 },
+        enemy:    { text: 'Prends {goal} cases à une autre colonie', points: 45, food: 100 },
+        treasure: { text: 'Prends le trésor : {treasure}', points: 50, food: 120 },
+        stock:    { text: 'Amasse {goal} de nourriture', points: 20, food: 0 },
+        evolve:   { text: 'Achète {goal} évolution', points: 20, food: 50 },
+        beetle:   { text: '⭐ Tiens le Scarabée géant pendant {minutes} min', points: 120, food: 200, rare: true, holdTicks: 1500, unlock: 'beetle' },
+      },
     },
 
     ai: {
       count: 5,
+      /** Si des IA ont disparu, une nouvelle colonie IA apparaît tous les N ticks (jusqu'à ai.count / online.aiCount). */
+      respawnEvery: 1500,
       /** Les IA réfléchissent tous les N ticks. */
       thinkEvery: 15,
       /** Marge de sécurité : force envoyée / force nécessaire. */
@@ -155,11 +197,13 @@
       /** En ligne, le temps passe N fois moins vite qu'en solo (un tick = tickSeconds × N). */
       slowdown: 8,
       /** Changer ce numéro recrée le monde en ligne au prochain passage du serveur. */
-      worldVersion: 2,
+      worldVersion: 3,
+      /** Graine de la carte du monde en ligne (changer worldVersion pour en tirer une nouvelle). */
+      mapSeed: 20261117,
+      /** Le serveur ne fait rien si aucun joueur n'a été vu depuis N minutes (économie de serveur). */
+      idleMinutes: 15,
       /** Colonies IA présentes dans chaque nouveau monde en ligne. */
       aiCount: 4,
-      /** Après une victoire, un nouveau monde naît au bout de N minutes. */
-      resetAfterMinutes: 60,
       maxNameLength: 24,
     },
 
@@ -191,19 +235,22 @@
     },
 
     /**
-     * Biomes : nourriture/tick récoltée par case, bonus de défense, coût de déplacement,
+     * Terrains du jardin : nourriture/tick récoltée par case, bonus de défense, coût de déplacement,
      * garnison d'insectes sauvages [min, max] sur les cases neutres.
      */
     biomes: {
-      jungle:   { name: 'Jungle',          color: '#138a3e', food: 1.6, defense: 1.2, travel: 1.3, wild: [6, 14] },
-      forest:   { name: 'Forêt tempérée',  color: '#4caf50', food: 1.3, defense: 1.1, travel: 1.1, wild: [4, 10] },
-      savanna:  { name: 'Savane',          color: '#e5b842', food: 1.1, defense: 1.0, travel: 1.0, wild: [3, 8] },
-      grass:    { name: 'Prairie',         color: '#a5d65a', food: 1.0, defense: 1.0, travel: 0.8, wild: [2, 6] },
-      desert:   { name: 'Désert',          color: '#f0cf8a', food: 0.3, defense: 0.9, travel: 1.6, wild: [0, 3] },
-      mountain: { name: 'Montagne',        color: '#9c7b63', food: 0.5, defense: 1.6, travel: 1.8, wild: [2, 6] },
-      taiga:    { name: 'Taïga',           color: '#2f7f68', food: 0.7, defense: 1.1, travel: 1.3, wild: [2, 6] },
-      tundra:   { name: 'Toundra',         color: '#a8c3cf', food: 0.35, defense: 1.0, travel: 1.4, wild: [0, 3] },
-      ice:      { name: 'Glace',           color: '#eef7fb', food: 0.05, defense: 1.0, travel: 2.0, wild: [0, 1] },
+      flowers: { name: 'Fleurs',             color: '#e58fc0', food: 1.8, defense: 0.9, travel: 1.0, wild: [6, 12] },
+      moss:    { name: 'Mousse',             color: '#4f9a5b', food: 1.4, defense: 1.0, travel: 1.2, wild: [4, 9] },
+      leaves:  { name: 'Feuilles mortes',    color: '#b98146', food: 1.2, defense: 1.2, travel: 1.2, wild: [3, 8] },
+      grass:   { name: 'Herbe',              color: '#93c45a', food: 1.0, defense: 1.0, travel: 1.0, wild: [2, 6] },
+      dirt:    { name: 'Terre',              color: '#a48262', food: 0.7, defense: 1.0, travel: 0.8, wild: [1, 4] },
+      roots:   { name: 'Racines',            color: '#6e5440', food: 0.6, defense: 1.6, travel: 1.5, wild: [3, 7] },
+      sand:    { name: 'Sable',              color: '#e9d69e', food: 0.3, defense: 0.9, travel: 0.7, wild: [0, 2] },
+    },
+    /** Obstacles infranchissables (seulement pour l'affichage). */
+    obstacles: {
+      water: { name: 'Flaque', color: '#7cbcd8' },
+      rock:  { name: 'Caillou', color: '#a9a5a0' },
     },
   };
 

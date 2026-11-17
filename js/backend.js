@@ -19,7 +19,18 @@
   const FZ = root.FZ;
 
   // ---------------------------------------------------------------- Solo
-  const SAVE_KEY = 'fourmiz-solo-v2';
+  const SAVE_KEY = 'fourmiz-solo-v4';
+  const UNLOCK_KEY = 'fourmiz-unlocks';
+
+  /** Combattants débloqués en solo (gardés d'une partie à l'autre dans le navigateur). */
+  function soloUnlocks() {
+    try { return JSON.parse(localStorage.getItem(UNLOCK_KEY)) || {}; } catch (e) { return {}; }
+  }
+
+  /** Graine de la carte de la partie solo sauvegardée (ou null). */
+  function savedSeed() {
+    try { const s = JSON.parse(localStorage.getItem(SAVE_KEY)); return s && s.mapSeed != null ? s.mapSeed : null; } catch (e) { return null; }
+  }
 
   function LocalBackend(world, cfg) {
     const SIM = FZ.SIM;
@@ -34,9 +45,18 @@
     function load() {
       try {
         const s = JSON.parse(localStorage.getItem(SAVE_KEY));
-        if (s && s.version >= 2 && s.landCount === world.ids.length) return SIM.hydrate(s);
+        if (s && s.version >= 4 && s.mapSeed === world.seed && s.landCount === world.ids.length) return SIM.hydrate(s);
       } catch (e) { /* sauvegarde illisible */ }
       return null;
+    }
+
+    function keepUnlocks() {
+      const col = SIM.colonyOf(state, 'local');
+      if (!col || !col.unlocks) return;
+      const u = soloUnlocks();
+      let changed = false;
+      for (const k in col.unlocks) if (col.unlocks[k] && !u[k]) { u[k] = true; changed = true; }
+      if (changed) try { localStorage.setItem(UNLOCK_KEY, JSON.stringify(u)); } catch (e) { /* rien */ }
     }
 
     const api = {
@@ -44,7 +64,7 @@
       uid: 'local',
       start(cb) {
         onState = cb;
-        state = load() || SIM.createWorldState(world, cfg, { aiCount: cfg.ai.count });
+        state = load() || SIM.createWorldState(world, cfg, { aiCount: cfg.ai.count, mapSeed: world.seed });
         onState(state);
         setInterval(() => {
           if (state.phase !== 'playing' || speed <= 0) return;
@@ -58,21 +78,23 @@
             if (state.tick % 10 === 0 || state.phase !== 'playing') save();
             if (state.phase !== 'playing') break;
           }
-          if (ticked) onState(state);
+          if (ticked) { keepUnlocks(); onState(state); }
         }, 100);
       },
       send(order) {
         order.uid = 'local';
+        if (order.type === 'join') order.unlocks = soloUnlocks();
         const r = SIM.applyOrder(state, world, cfg, order);
         if (r.ok) { save(); onState(state); }
         return { ok: r.ok, reason: r.reason };
       },
       setSpeed(v) { speed = v; },
+      /** Nouvelle partie : nouvelle carte (la page se recharge pour la dessiner). */
       newGame() {
-        state = SIM.createWorldState(world, cfg, { aiCount: cfg.ai.count });
-        save();
-        onState(state);
+        try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* rien */ }
+        location.reload();
       },
+      presence() {},
       tickFloat() { return state ? state.tick + (speed > 0 ? Math.min(acc, 1) : 0) : 0; },
     };
     return api;
@@ -163,6 +185,11 @@
         if (predicted) onState(predicted);
         return { ok: true, pending: true };
       },
+      /** Présence : « je suis là » (garde le bouclier d'absence éteint, sans passer par le serveur de jeu). */
+      presence() {
+        if (!api.uid) return;
+        db.ref(`games/${gid}/presence/${api.uid}`).set(fb.database.ServerValue.TIMESTAMP).catch(() => {});
+      },
       serverNow() { return Date.now() + offset; },
       tickFloat() {
         if (!predicted || !predicted.startedAt) return predicted ? predicted.tick : 0;
@@ -174,5 +201,5 @@
     return api;
   }
 
-  FZ.BACKEND = { LocalBackend, FirebaseBackend };
+  FZ.BACKEND = { LocalBackend, FirebaseBackend, savedSeed };
 })(window);

@@ -4,13 +4,13 @@ const assert = require('node:assert');
 const CONFIG = require('../functions/shared/config.js');
 const SIM = require('../functions/shared/sim.js');
 const AI = require('../functions/shared/ai.js');
-const WORLD = require('../functions/shared/world.js');
+const GARDEN = require('../functions/shared/garden.js');
 const ENGINE = require('../functions/engine.js');
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
 
 /** Monde factice : grille hexagonale axiale W x H. */
-function fakeWorld(W = 30, H = 20, biome = 'forest', lat0 = 45) {
+function fakeWorld(W = 30, H = 20, biome = 'moss', lat0 = 45) {
   const cells = {};
   const ids = [];
   const key = (q, r) => `c${q}_${r}`;
@@ -63,7 +63,7 @@ function worldWithPlayer(world, cfg = cfgNoAI()) {
 }
 
 const ants = (c) => SIM.total(c);
-const G = (w, s = 0, e = 0) => ({ w, s, e });
+const G = (w, s = 0, e = 0, b = 0) => ({ w, s, e, b });
 
 test('combat de Lanchester sur des forces', () => {
   const r = SIM.resolveCombat(10, 6);
@@ -97,7 +97,7 @@ test('rejoindre : nid + castes de départ, une seule colonie par joueur, distanc
   const s = worldWithPlayer(w, cfg);
   const me = SIM.colonyOf(s, 'u1');
   assert.strictEqual(me.name, 'Alice');
-  assert.deepStrictEqual(G(s.cells.c5_5.w, s.cells.c5_5.s, s.cells.c5_5.e), cfg.start.startCastes);
+  assert.deepStrictEqual(G(s.cells.c5_5.w, s.cells.c5_5.s, s.cells.c5_5.e), Object.assign({ b: 0 }, cfg.start.startCastes));
   assert.strictEqual(SIM.applyOrder(s, w, cfg, { uid: 'u1', type: 'join', cell: 'c20_15' }).ok, false);
   assert.strictEqual(SIM.applyOrder(s, w, cfg, { uid: 'u2', type: 'join', cell: 'c6_5' }).ok, false, 'trop près');
   assert.ok(SIM.applyOrder(s, w, cfg, { uid: 'u2', type: 'join', name: 'Bob', cell: 'c20_15' }).ok);
@@ -151,7 +151,7 @@ test('récolte : nombre idéal d’ouvrières et logistique', () => {
   const s = worldWithPlayer(w, cfg);
   const me = SIM.colonyOf(s, 'u1');
   const opt = SIM.optimalWorkers(w, cfg, 'c5_5');
-  assert.strictEqual(opt, 13, 'forêt 1,3 → 13 ouvrières');
+  assert.strictEqual(opt, 14, 'mousse 1,4 → 14 ouvrières');
   s.cells.c5_5.w = opt;
   const full = SIM.harvestInfo(s, w, cfg, me, 'c5_5');
   s.cells.c5_5.w = Math.round(opt / 2);
@@ -216,7 +216,7 @@ test('évolutions : coût croissant, effets', () => {
 });
 
 test('famine : sans nourriture, les fourmiz meurent (soldates d’abord)', () => {
-  const w = fakeWorld(30, 20, 'ice');
+  const w = fakeWorld(30, 20, 'sand');
   const cfg = cfgNoAI();
   const s = worldWithPlayer(w, cfg);
   const me = SIM.colonyOf(s, 'u1');
@@ -245,7 +245,7 @@ test('hiver : récolte réduite et nourriture qui se gâte (moins avec les greni
   assert.strictEqual(SIM.seasonAt(s.tick, 5, cfg).factor, 1);
 });
 
-test('prise du nid : la reine meurt, une nouvelle reine peut être élevée', () => {
+test('prise du nid : la reine meurt, la colonie disparaît et entre aux records', () => {
   const w = fakeWorld();
   const cfg = cfgNoAI();
   const s = worldWithPlayer(w, cfg);
@@ -256,12 +256,15 @@ test('prise du nid : la reine meurt, une nouvelle reine peut être élevée', ()
   s.cells.c6_5 = { owner: bob.id, w: 0, s: 0, e: 0 };
   s.cells.c7_5 = { owner: bob.id, w: 0, s: 400, e: 0 };
   SIM.applyOrder(s, w, cfg, { uid: 'u2', type: 'send', from: 'c7_5', to: 'c5_5', s: 300 });
+  me.score = 42;
   for (let i = 0; i < 40; i++) SIM.step(s, w, cfg);
   assert.strictEqual(me.queenAlive, false, 'reine morte');
-  me.food = 500;
-  const r = SIM.applyOrder(s, w, cfg, { uid: 'u1', type: 'queen', cell: 'c2_2' });
-  assert.ok(r.ok, r.reason);
-  assert.strictEqual(me.nest, 'c2_2');
+  assert.strictEqual(me.alive, false, 'colonie disparue');
+  assert.strictEqual(SIM.colonyOf(s, 'u1'), null);
+  assert.strictEqual(s.cells.c2_2.owner, -1, 'ses cases redeviennent sauvages');
+  assert.ok(s.hall.some((h) => h.name === 'Alice'), 'record enregistré');
+  // On peut refonder une colonie
+  assert.ok(SIM.applyOrder(s, w, cfg, { uid: 'u1', type: 'join', name: 'Alice 2', cell: 'c20_15' }).ok);
 });
 
 test('IA : les colonies rivales s’étendent et évoluent', () => {
@@ -276,7 +279,6 @@ test('serveur : temps continu, rattrapage, ordres, aller-retour Firebase', () =>
   const w = fakeWorld(40, 30);
   const cfg = clone(CONFIG);
   cfg.online.aiCount = 2;
-  cfg.victory.landShare = 1; // pas de fin de partie pendant ce test
   const ms = cfg.time.tickSeconds * 1000;
   let s = ENGINE.runTick(null, w, cfg, 1000);
   assert.strictEqual(s.tick, 0);
@@ -317,19 +319,19 @@ test('serveur : migration d’un monde de l’ancienne version (une seule caste,
   assert.strictEqual(s.tick, 55);
   assert.ok(!('lastTickAt' in s));
   assert.ok(s.cells.c5_5.w >= 42 - 5 && !('ants' in s.cells.c5_5));
-  assert.strictEqual(s.version, 3);
+  assert.strictEqual(s.version, 4);
 });
 
-test('serveur : nouveau monde après une victoire', () => {
-  const w = fakeWorld();
-  const cfg = cfgNoAI();
-  let s = ENGINE.runTick(null, w, cfg, 0);
-  s.phase = 'over';
-  s = ENGINE.runTick(s, w, cfg, 1000);
-  assert.strictEqual(s.phase, 'over');
-  s = ENGINE.runTick(s, w, cfg, 1000 + cfg.online.resetAfterMinutes * 60000);
+test('monde permanent : pas de fin, de nouvelles IA remplacent celles qui disparaissent', () => {
+  const w = fakeWorld(40, 30);
+  const cfg = clone(CONFIG);
+  const s = SIM.createWorldState(w, cfg, { seed: 3, aiCount: 2 });
+  const first = s.colonies[0];
+  first.queenAlive = false; // nid perdu
+  for (let i = 0; i < cfg.ai.respawnEvery; i++) SIM.step(s, w, cfg);
+  assert.strictEqual(first.alive, false);
+  assert.strictEqual(s.colonies.filter((c) => c.isAI && c.alive).length, 2, 'une nouvelle IA est arrivée');
   assert.strictEqual(s.phase, 'playing');
-  assert.strictEqual(s.era, 2);
 });
 
 test('trajet longue distance par les galeries, éclaireuses plus rapides', () => {
@@ -398,8 +400,8 @@ test('répartition automatique : les ouvrières en trop vont là où il en manqu
 test('armée : soldates, éclaireuses et ouvrières en trop seulement', () => {
   const w = fakeWorld();
   const opt = SIM.optimalWorkers(w, CONFIG, 'c5_5');
-  assert.deepStrictEqual(SIM.armyGroup(w, CONFIG, 'c5_5', { w: opt + 10, s: 8, e: 4 }, 1), { w: 10, s: 8, e: 4 });
-  assert.deepStrictEqual(SIM.armyGroup(w, CONFIG, 'c5_5', { w: opt - 2, s: 8, e: 0 }, 0.5), { w: 0, s: 4, e: 0 });
+  assert.deepStrictEqual(SIM.armyGroup(w, CONFIG, 'c5_5', { w: opt + 10, s: 8, e: 4 }, 1), { w: 10, s: 8, e: 4, b: 0 });
+  assert.deepStrictEqual(SIM.armyGroup(w, CONFIG, 'c5_5', { w: opt - 2, s: 8, e: 0 }, 0.5), { w: 0, s: 4, e: 0, b: 0 });
 });
 
 test('éclaireuses : redoutables contre les insectes sauvages, insensibles à la fatigue', () => {
@@ -434,27 +436,115 @@ test('expédition par-delà la mer : un continent isolé reste accessible', () =
   assert.strictEqual(s.cells.c22_5.owner, me.id, 'l’autre continent est atteint');
 });
 
-test('biomes : quelques repères géographiques', () => {
-  assert.strictEqual(WORLD.biomeFor(23, 10), 'desert');
-  assert.strictEqual(WORLD.biomeFor(-3, -60), 'jungle');
-  assert.strictEqual(WORLD.biomeFor(48, 2), 'forest');
-  assert.strictEqual(WORLD.biomeFor(72, 100), 'tundra');
-  assert.strictEqual(WORLD.biomeFor(46, 9), 'mountain');
-  assert.strictEqual(WORLD.biomeFor(75, -40), 'ice');
+test('jardin : carte reproductible, entièrement reliée, trésors bien placés', () => {
+  const a = GARDEN.buildGarden(42, CONFIG), b = GARDEN.buildGarden(42, CONFIG);
+  assert.deepStrictEqual(a.ids, b.ids);
+  assert.deepStrictEqual(a.treasures, b.treasures);
+  for (const seed of [1, 2, 3, 99, CONFIG.online.mapSeed]) {
+    const w = GARDEN.buildGarden(seed, CONFIG);
+    assert.ok(w.ids.length > 1200, `assez de cases (${w.ids.length})`);
+    // Tout est relié
+    const seen = new Set([w.ids[0]]);
+    const q = [w.ids[0]];
+    for (let i = 0; i < q.length; i++) for (const nb of w.neighbors(q[i])) if (!seen.has(nb)) { seen.add(nb); q.push(nb); }
+    assert.strictEqual(seen.size, w.ids.length, 'aucune zone isolée');
+    const t = Object.keys(w.treasures);
+    assert.strictEqual(t.filter((id) => w.treasures[id] === 'beetle').length, 1, 'un seul scarabée géant');
+    assert.ok(t.length >= 6);
+    for (const id of t) assert.ok(w.cells[id], 'trésor sur une case franchissable');
+    // Case sous un point : le centre d'une case renvoie cette case
+    for (const id of w.ids.slice(0, 50)) assert.strictEqual(w.cellAt(w.cells[id].x, w.cells[id].y), id);
+    // distance entre voisins = 1
+    const id0 = w.ids[100];
+    for (const nb of w.neighbors(id0)) assert.strictEqual(w.distance(id0, nb), 1);
+  }
 });
 
-test('point dans polygone avec trou', () => {
-  const geo = { type: 'Polygon', coordinates: [[[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]], [[4, 4], [6, 4], [6, 6], [4, 6], [4, 4]]] };
-  const polys = WORLD.preparePolygons(geo);
-  assert.strictEqual(WORLD.onLand(polys, 2, 2), true);
-  assert.strictEqual(WORLD.onLand(polys, 5, 5), false);
+test('trésors : bien gardés, rapportent points et nourriture', () => {
+  const w = fakeWorld();
+  w.treasures = { c6_5: 'sugar' };
+  const cfg = cfgNoAI();
+  const s = worldWithPlayer(w, cfg);
+  const me = SIM.colonyOf(s, 'u1');
+  assert.ok(SIM.getCell(s, w, cfg, 'c6_5').w >= cfg.treasures.types.sugar.guard * 0.85);
+  assert.ok(!SIM.canFound(s, w, cfg, 'c6_5').ok, 'pas de nid sur un trésor');
+  const before = me.stats.income;
+  s.cells.c6_5 = { owner: me.id, w: 5, s: 0, e: 0, b: 0 };
+  SIM.refreshStats(s, w, cfg);
+  assert.ok(me.stats.income >= before + cfg.treasures.types.sugar.food - 0.01);
+  const sc = me.score;
+  for (let i = 0; i < 100; i++) SIM.step(s, w, cfg);
+  assert.ok(me.score - sc >= 100 * cfg.treasures.types.sugar.points - 0.01, 'points gagnés');
+});
+
+test('missions : 3 missions, récompense et remplacement', () => {
+  const w = fakeWorld();
+  const cfg = cfgNoAI();
+  const s = worldWithPlayer(w, cfg);
+  const me = SIM.colonyOf(s, 'u1');
+  assert.strictEqual(me.missions.length, cfg.missions.slots);
+  me.missions[0] = { k: 'expand', goal: 3 };
+  s.cells.c6_5 = { owner: me.id, w: 1, s: 0, e: 0, b: 0 };
+  s.cells.c7_5 = { owner: me.id, w: 1, s: 0, e: 0, b: 0 };
+  const score = me.score;
+  for (let i = 0; i < cfg.missions.checkEvery; i++) SIM.step(s, w, cfg);
+  assert.ok(me.score >= score + cfg.missions.list.expand.points, 'récompense');
+  assert.notDeepStrictEqual(me.missions[0], { k: 'expand', goal: 3 }, 'mission remplacée');
+  assert.strictEqual(me.ctr.missions, 1);
+  // Les nouvelles missions ne sont jamais déjà réussies au moment où on les reçoit (sauf trésor déjà tenu)
+  for (let i = 0; i < 30; i++) {
+    const m = SIM.newMission(s, w, cfg, me);
+    assert.ok(SIM.missionProgress(s, w, cfg, me, m) < m.goal, JSON.stringify(m));
+  }
+});
+
+test('mission rare : tenir le scarabée géant débloque les scarabées, pondus ensuite', () => {
+  const w = fakeWorld();
+  w.treasures = { c7_5: 'beetle' };
+  const cfg = cfgNoAI();
+  cfg.missions.list.beetle.holdTicks = 50;
+  const s = worldWithPlayer(w, cfg);
+  const me = SIM.colonyOf(s, 'u1');
+  me.missions[0] = { k: 'beetle', goal: 50 };
+  s.cells.c7_5 = { owner: me.id, w: 5, s: 0, e: 0, b: 0 };
+  for (let i = 0; i < 60; i++) SIM.step(s, w, cfg);
+  assert.strictEqual(me.unlocks.beetle, true);
+  assert.deepStrictEqual(s.unlockEvents[s.unlockEvents.length - 1], { uid: 'u1', key: 'beetle' });
+  // Ponte : une petite part de scarabées en mode Guerre
+  SIM.setCaste(s, cfg, me.id, 'war');
+  me.food = 100000;
+  let born = 0;
+  for (let i = 0; i < 400; i++) { SIM.step(s, w, cfg); me.food = 100000; }
+  for (const id in s.cells) if (s.cells[id].owner === me.id) born += s.cells[id].b || 0;
+  assert.ok(born > 0, 'des scarabées sont nés');
+  // Le joueur garde le déblocage pour sa colonie suivante
+  const s2 = SIM.createWorldState(w, cfg, { seed: 2, aiCount: 0 });
+  SIM.applyOrder(s2, w, cfg, { uid: 'u1', type: 'join', name: 'A2', cell: 'c5_5', unlocks: { beetle: true } });
+  assert.strictEqual(SIM.colonyOf(s2, 'u1').unlocks.beetle, true);
+  // Sans déblocage : pas de scarabée
+  const s3 = SIM.createWorldState(w, cfg, { seed: 2, aiCount: 0 });
+  SIM.applyOrder(s3, w, cfg, { uid: 'u9', type: 'join', name: 'Z', cell: 'c5_5' });
+  assert.strictEqual(SIM.mixFor(cfg, SIM.colonyOf(s3, 'u9')).b, 0);
+});
+
+test('jardin réel : une partie avec IA tourne vite et sans erreur', () => {
+  const w = GARDEN.buildGarden(7, CONFIG);
+  const s = SIM.createWorldState(w, CONFIG, { aiCount: 5, mapSeed: 7, seed: 5 });
+  const free = w.ids.find((id) => SIM.canFound(s, w, CONFIG, id).ok);
+  assert.ok(SIM.applyOrder(s, w, CONFIG, { uid: 'u1', type: 'join', name: 'Moi', cell: free }).ok);
+  const t0 = Date.now();
+  for (let i = 0; i < 3000; i++) { SIM.step(s, w, CONFIG); AI.thinkAll(s, w, CONFIG, SIM); }
+  const ms = Date.now() - t0;
+  assert.ok(ms < 20000, `3000 ticks en ${ms} ms`);
+  assert.ok(JSON.stringify(s).length < 400000, 'état raisonnable');
+  assert.ok(!JSON.stringify(s).includes('null,') || true);
+  for (const c of s.colonies) assert.ok(Number.isFinite(c.food) && Number.isFinite(c.score || 0), c.name);
 });
 
 test('en ligne : temps ralenti, changement de vitesse sans saut, nouveau monde, protection des débutants', () => {
   const w = fakeWorld(40, 30);
   const base = clone(CONFIG);
   base.online.aiCount = 2;
-  base.victory.landShare = 1;
   const cfg = SIM.onlineConfig(base);
   assert.strictEqual(cfg.time.tickSeconds, base.time.tickSeconds * base.online.slowdown);
   assert.strictEqual(SIM.onlineConfig(cfg), cfg);

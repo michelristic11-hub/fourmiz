@@ -4,19 +4,25 @@
  * L'état de jeu est un objet JSON sérialisable : il est sauvegardé tel quel (navigateur en solo,
  * Realtime Database en ligne) et le serveur utilise ce même code pour arbitrer les parties.
  *
- * Fourmiz : trois castes, comptées séparément sur chaque case et dans chaque trajet.
- *   w = ouvrières (récoltent), s = soldates (combattent), e = éclaireuses (rapides).
+ * Fourmiz : quatre castes, comptées séparément sur chaque case et dans chaque trajet.
+ *   w = ouvrières (récoltent), s = soldates (combattent), e = éclaireuses (rapides),
+ *   b = scarabées (combattants spéciaux, à débloquer par la mission rare).
+ *
+ * Le monde est permanent : pas de fin de partie. Si la reine meurt, la colonie disparaît.
+ * Objectifs : tenir des trésors, réussir des missions, marquer des points (classement et records).
  *
  * Interface « world » attendue :
  *   world.ids                 : tableau des identifiants de cases (terre ferme)
  *   world.cells[id]           : { id, lat, lng, biome }
  *   world.neighbors(id)       : identifiants des cases voisines sur terre ferme
  *   world.distance(a, b)      : distance en nombre de cases
+ *   world.treasures           : (facultatif) { id: type de trésor }
  */
 (function (root) {
   'use strict';
 
-  const CASTES = ['w', 's', 'e'];
+  const CASTES = ['w', 's', 'e', 'b'];
+  const emptyGroup = () => ({ w: 0, s: 0, e: 0, b: 0 });
 
   // ---------- Hasard reproductible ----------
 
@@ -41,18 +47,19 @@
   // ---------- Groupes de fourmiz (castes) ----------
 
   /** Nombre total de fourmiz d'une case ou d'un trajet. */
-  function total(g) { return (g.w || 0) + (g.s || 0) + (g.e || 0); }
+  function total(g) { return (g.w || 0) + (g.s || 0) + (g.e || 0) + (g.b || 0); }
 
   /** Force de combat brute d'un groupe (vsWild : contre des insectes sauvages, les éclaireuses excellent). */
   function power(g, cfg, col, vsWild) {
     const acid = col ? evoLevel(col, 'acid') * cfg.evolutions.list.acid.effect : 0;
     const e = cfg.castes.e.power * (vsWild ? cfg.castes.e.wildBonus : 1);
-    return (g.w || 0) * cfg.castes.w.power + (g.s || 0) * (cfg.castes.s.power + acid) + (g.e || 0) * e;
+    return (g.w || 0) * cfg.castes.w.power + (g.s || 0) * (cfg.castes.s.power + acid) + (g.e || 0) * e + (g.b || 0) * cfg.castes.b.power;
   }
 
   /** Multiplie chaque caste d'un groupe (arrondi vers le bas, au moins 1 fourmi si min1). */
   function scaleGroup(g, f, min1) {
-    const out = { w: Math.floor((g.w || 0) * f), s: Math.floor((g.s || 0) * f), e: Math.floor((g.e || 0) * f) };
+    const out = emptyGroup();
+    for (const k of CASTES) out[k] = Math.floor((g[k] || 0) * f);
     if (min1 && total(out) === 0) {
       const best = CASTES.slice().sort((a, b) => (g[b] || 0) - (g[a] || 0))[0];
       out[best] = 1;
@@ -61,11 +68,11 @@
   }
 
   /**
-   * Prend une part des fourmiz d'une case : caste = 'all' | 'w' | 's' | 'e', share entre 0 et 1.
-   * @returns {{w:number, s:number, e:number}}
+   * Prend une part des fourmiz d'une case : caste = 'all' | 'w' | 's' | 'e' | 'b', share entre 0 et 1.
+   * @returns {{w:number, s:number, e:number, b:number}}
    */
   function pickGroup(cell, caste, share) {
-    const g = { w: 0, s: 0, e: 0 };
+    const g = emptyGroup();
     const keys = caste && caste !== 'all' ? [caste] : CASTES;
     for (const k of keys) g[k] = Math.floor((cell[k] || 0) * share);
     if (total(g) === 0) {
@@ -80,9 +87,10 @@
    */
   function armyGroup(world, cfg, id, cell, share) {
     const spare = Math.max(0, (cell.w || 0) - optimalWorkers(world, cfg, id));
-    const base = { w: spare, s: cell.s || 0, e: cell.e || 0 };
-    const g = { w: Math.floor(base.w * share), s: Math.floor(base.s * share), e: Math.floor(base.e * share) };
-    if (total(g) === 0) for (const k of ['s', 'e', 'w']) if (base[k] > 0) { g[k] = 1; break; }
+    const base = { w: spare, s: cell.s || 0, e: cell.e || 0, b: cell.b || 0 };
+    const g = emptyGroup();
+    for (const k of CASTES) g[k] = Math.floor(base[k] * share);
+    if (total(g) === 0) for (const k of ['b', 's', 'e', 'w']) if (base[k] > 0) { g[k] = 1; break; }
     return g;
   }
 
@@ -90,20 +98,27 @@
 
   /** Garnison d'insectes sauvages d'une case neutre jamais touchée. */
   function wildGarrison(world, cfg, id) {
+    const t = treasureAt(world, id);
+    if (t) return Math.round(cfg.treasures.types[t].guard * (0.85 + 0.3 * hash01(id)));
     const b = cfg.biomes[world.cells[id].biome];
     return Math.round(b.wild[0] + hash01(id) * (b.wild[1] - b.wild[0]));
+  }
+
+  /** Type de trésor posé sur une case (ou null). */
+  function treasureAt(world, id) {
+    return (world.treasures && world.treasures[id]) || null;
   }
 
   /** Renvoie l'état d'une case (owner = -1 pour neutre). Ne modifie pas l'état. */
   function getCell(state, world, cfg, id) {
     const c = state.cells[id];
     if (c) return c;
-    return { owner: -1, w: wildGarrison(world, cfg, id), s: 0, e: 0 };
+    return { owner: -1, w: wildGarrison(world, cfg, id), s: 0, e: 0, b: 0 };
   }
 
   /** Renvoie l'état modifiable d'une case (le crée si besoin). */
   function cellRef(state, world, cfg, id) {
-    if (!state.cells[id]) state.cells[id] = { owner: -1, w: wildGarrison(world, cfg, id), s: 0, e: 0 };
+    if (!state.cells[id]) state.cells[id] = { owner: -1, w: wildGarrison(world, cfg, id), s: 0, e: 0, b: 0 };
     return state.cells[id];
   }
 
@@ -134,6 +149,8 @@
     col.food -= cost;
     col.evo = col.evo || {};
     col.evo[key] = evoLevel(col, key) + 1;
+    col.ctr = col.ctr || {};
+    col.ctr.evo = (col.ctr.evo || 0) + 1;
     if (!col.isAI) addLog(state, `${col.name} évolue : ${cfg.evolutions.list[key].name} niveau ${col.evo[key]}.`, colonyId);
     return { ok: true };
   }
@@ -214,7 +231,12 @@
     opts = opts || {};
     const seed = (opts.seed >>> 0) || ((Math.random() * 2 ** 32) >>> 0);
     const state = {
-      version: 3,
+      version: 4,
+      /** Graine de la carte jardin (la carte se recalcule à partir d'elle). */
+      mapSeed: opts.mapSeed == null ? (world.seed || 0) : opts.mapSeed,
+      aiTarget: opts.aiCount == null ? cfg.ai.count : opts.aiCount,
+      hall: [],
+      unlockEvents: [],
       era: opts.era || 1,
       seed,
       rng: seed,
@@ -232,8 +254,8 @@
       winner: -1,
       overTick: 0,
     };
-    placeAIs(state, world, cfg, opts.aiCount == null ? cfg.ai.count : opts.aiCount);
-    addLog(state, `Ère ${state.era} : un nouveau monde est né.`, -1);
+    placeAIs(state, world, cfg, state.aiTarget);
+    addLog(state, 'Un nouveau jardin est né.', -1);
     refreshStats(state, world, cfg);
     return state;
   }
@@ -247,31 +269,38 @@
     state.colonies = toArray(state.colonies);
     state.moves = toArray(state.moves);
     state.log = toArray(state.log);
+    state.hall = toArray(state.hall);
+    state.unlockEvents = toArray(state.unlockEvents);
     state.cells = state.cells || {};
+    if (state.aiTarget == null) state.aiTarget = state.colonies.filter((c) => c.isAI).length;
     for (const col of state.colonies) {
       if (col.nest === undefined) col.nest = null;
       col.stats = col.stats || {};
       if (col.uid === undefined) col.uid = null;
       col.evo = col.evo || {};
       col.caste = col.caste || 'balanced';
-      col.layAcc = col.layAcc || { w: 0, s: 0, e: 0 };
+      col.layAcc = Object.assign(emptyGroup(), col.layAcc || {});
       if (col.autoWorkers === undefined) col.autoWorkers = true;
+      col.missions = toArray(col.missions);
+      col.ctr = col.ctr || {};
+      col.unlocks = col.unlocks || {};
+      col.score = col.score || 0;
     }
     for (const id in state.cells) {
       const c = state.cells[id];
       if ('ants' in c) { c.w = (c.w || 0) + c.ants; delete c.ants; } // version 2 : une seule caste
-      c.w = c.w || 0; c.s = c.s || 0; c.e = c.e || 0;
+      c.w = c.w || 0; c.s = c.s || 0; c.e = c.e || 0; c.b = c.b || 0;
     }
     for (const m of state.moves) {
       if ('ants' in m) { m.w = (m.w || 0) + m.ants; delete m.ants; }
-      m.w = m.w || 0; m.s = m.s || 0; m.e = m.e || 0;
+      m.w = m.w || 0; m.s = m.s || 0; m.e = m.e || 0; m.b = m.b || 0;
       if (!m.path) m.path = [m.from, m.to];
       if (!m.legs) m.legs = [0, m.arrive - m.depart];
       m.path = toArray(m.path);
       m.legs = toArray(m.legs);
     }
     if (state.winner == null) state.winner = -1;
-    state.version = 3;
+    state.version = 4;
     return state;
   }
 
@@ -316,9 +345,15 @@
       layMode: 'normal',
       caste: 'balanced',
       layProgress: 0,
-      layAcc: { w: 0, s: 0, e: 0 },
+      layAcc: emptyGroup(),
       evo: {},
       autoWorkers: true,
+      score: 0,
+      missions: [],
+      /** Compteurs pour les missions (cases prises, évolutions achetées, temps passé sur le scarabée…). */
+      ctr: {},
+      /** Combattants spéciaux débloqués (gardés d'une colonie à l'autre pour un même joueur). */
+      unlocks: {},
       alive: true,
       stats: {},
     };
@@ -326,7 +361,7 @@
 
   function startGarrison(cfg) {
     const g = cfg.start.startCastes;
-    return { w: g.w, s: g.s, e: g.e };
+    return { w: g.w, s: g.s, e: g.e, b: 0 };
   }
 
   function addLog(state, text, colony) {
@@ -350,8 +385,9 @@
   /** Vérifie qu'une case peut accueillir un nouveau nid. */
   function canFound(state, world, cfg, id) {
     if (state.phase !== 'playing') return { ok: false, reason: 'Le monde redémarre bientôt.' };
-    if (!world.cells[id]) return { ok: false, reason: 'Choisis une case sur la terre ferme.' };
+    if (!world.cells[id]) return { ok: false, reason: 'Choisis une case libre (pas une flaque ni un caillou).' };
     if (!isFree(state, id)) return { ok: false, reason: 'Cette case est déjà occupée.' };
+    if (treasureAt(world, id)) return { ok: false, reason: 'Impossible de fonder un nid sur un trésor.' };
     const d = cfg.start.minNestDistance;
     for (const k in state.cells) {
       if (state.cells[k].owner >= 0 && world.distance(id, k) < d) {
@@ -363,7 +399,7 @@
 
   /**
    * Un joueur fonde sa colonie : la reine et toutes les fourmiz de départ sur la case choisie.
-   * @param {object} who { uid, name }
+   * @param {object} who { uid, name, unlocks }
    */
   function joinColony(state, world, cfg, who, id) {
     if (colonyOf(state, who.uid)) return { ok: false, reason: 'Tu as déjà une colonie dans ce monde.' };
@@ -375,8 +411,11 @@
     const col = newColony(state.colonies.length, name, palette[humans % palette.length], false, cfg, who.uid);
     col.bornTick = state.tick;
     col.nest = id;
+    if (who.unlocks) for (const k in who.unlocks) if (who.unlocks[k] === true) col.unlocks[k] = true;
     state.colonies.push(col);
     state.cells[id] = Object.assign({ owner: col.id }, startGarrison(cfg));
+    refreshStats(state, world, cfg);
+    for (let i = 0; i < cfg.missions.slots; i++) col.missions.push(newMission(state, world, cfg, col));
     addLog(state, `${col.name} fonde sa colonie.`, col.id);
     refreshStats(state, world, cfg);
     return { ok: true, colony: col };
@@ -388,15 +427,15 @@
   }
 
   function placeAIs(state, world, cfg, n) {
-    const taken = Object.keys(state.cells);
+    const taken = Object.keys(state.cells).filter((id) => state.cells[id].owner >= 0);
     const minD = cfg.start.minNestDistance * 2;
-    const goodBiomes = ['jungle', 'forest', 'savanna', 'grass', 'taiga'];
+    const goodBiomes = ['grass', 'moss', 'leaves', 'flowers', 'dirt'];
     const already = state.colonies.filter((c) => c.isAI).length;
     for (let i = 0; i < n; i++) {
       let chosen = null;
       for (let attempt = 0; attempt < 400 && !chosen; attempt++) {
         const id = world.ids[Math.floor(rand(state) * world.ids.length)];
-        if (!isFree(state, id)) continue;
+        if (!isFree(state, id) || treasureAt(world, id)) continue;
         if (attempt < 300 && goodBiomes.indexOf(world.cells[id].biome) < 0) continue;
         const d = attempt < 300 ? minD : cfg.start.minNestDistance;
         let ok = true;
@@ -407,12 +446,16 @@
       }
       if (!chosen) continue;
       const idx = state.colonies.length;
-      const k = already + i;
-      const col = newColony(idx, cfg.ai.names[k % cfg.ai.names.length], cfg.colors.ai[k % cfg.colors.ai.length], true, cfg);
+      const k = (state.aiBorn || already) + i;
+      const gen = Math.floor(k / cfg.ai.names.length);
+      const aiName = cfg.ai.names[k % cfg.ai.names.length] + (gen ? ' ' + ['II', 'III', 'IV', 'V', 'VI'][Math.min(gen - 1, 4)] : '');
+      const col = newColony(idx, aiName, cfg.colors.ai[k % cfg.colors.ai.length], true, cfg);
       col.nest = chosen;
       state.colonies.push(col);
       state.cells[chosen] = Object.assign({ owner: idx }, startGarrison(cfg));
       taken.push(chosen);
+      state.aiBorn = k + 1;
+      if (state.tick > 0) addLog(state, `Une nouvelle colonie sauvage s'installe : ${col.name}.`, idx);
     }
   }
 
@@ -424,7 +467,7 @@
    */
   function applyOrder(state, world, cfg, order) {
     if (!order || !order.uid) return { ok: false, reason: 'Ordre invalide.' };
-    if (order.type === 'join') return joinColony(state, world, cfg, { uid: order.uid, name: order.name }, String(order.cell));
+    if (order.type === 'join') return joinColony(state, world, cfg, { uid: order.uid, name: order.name, unlocks: order.unlocks }, String(order.cell));
     const col = colonyOf(state, order.uid);
     if (!col) return { ok: false, reason: 'Tu n’as pas de colonie dans ce monde.' };
     const wasAsleep = asleep(state, cfg, col);
@@ -437,14 +480,13 @@
       if (order.ants != null && order.w == null) {
         // Ancien format : un nombre total, réparti proportionnellement
         const c = state.cells[String(order.from)];
-        g = c ? scaleGroup(c, Math.min(1, (Number(order.ants) || 0) / Math.max(1, total(c))), true) : { w: 0, s: 0, e: 0 };
+        g = c ? scaleGroup(c, Math.min(1, (Number(order.ants) || 0) / Math.max(1, total(c))), true) : emptyGroup();
       } else {
-        g = { w: Number(order.w) || 0, s: Number(order.s) || 0, e: Number(order.e) || 0 };
+        g = { w: Number(order.w) || 0, s: Number(order.s) || 0, e: Number(order.e) || 0, b: Number(order.b) || 0 };
       }
       r = sendAnts(state, world, cfg, col.id, String(order.from), String(order.to), g);
     } else if (order.type === 'lay') r = setLayMode(state, cfg, col.id, String(order.mode));
     else if (order.type === 'caste') r = setCaste(state, cfg, col.id, String(order.preset));
-    else if (order.type === 'queen') r = raiseQueen(state, world, cfg, col.id, String(order.cell));
     else if (order.type === 'rally') r = rally(state, world, cfg, col.id, String(order.cell));
     else if (order.type === 'evolve') r = evolve(state, cfg, col.id, String(order.key));
     else if (order.type === 'auto') { col.autoWorkers = !!order.on; r = { ok: true }; }
@@ -627,22 +669,6 @@
     return { ok: true };
   }
 
-  /** Élève une nouvelle reine sur une case possédée (si l'ancienne est morte). */
-  function raiseQueen(state, world, cfg, colonyId, id) {
-    const col = state.colonies[colonyId];
-    const c = state.cells[id];
-    const req = cfg.queen.newQueen;
-    if (col.queenAlive) return { ok: false, reason: 'Ta reine est toujours en vie.' };
-    if (!c || c.owner !== colonyId) return { ok: false, reason: 'Choisis une de tes cases.' };
-    if (total(c) < req.minAnts) return { ok: false, reason: `Il faut ${req.minAnts} fourmiz sur la case.` };
-    if (col.food < req.food) return { ok: false, reason: `Il faut ${req.food} de nourriture.` };
-    col.food -= req.food;
-    col.queenAlive = true;
-    col.nest = id;
-    addLog(state, `${col.name} élève une nouvelle reine !`, colonyId);
-    return { ok: true };
-  }
-
   // ---------- Combat (micro-gestion tactique) ----------
 
   /** Multiplicateur de défense d'une case (biome, nid, proximité du nid, carapace). */
@@ -738,19 +764,24 @@
     if (r.attackerWins) {
       const surv = scaleGroup(move, r.ratio, true);
       cell.owner = move.owner;
-      cell.w = surv.w; cell.s = surv.s; cell.e = surv.e;
+      cell.w = surv.w; cell.s = surv.s; cell.e = surv.e; cell.b = surv.b;
+      atk.ctr = atk.ctr || {};
+      if (def) { atk.ctr.enemy = (atk.ctr.enemy || 0) + 1; atk.score = (atk.score || 0) + cfg.score.perEnemyCapture; }
+      else { atk.ctr.wild = (atk.ctr.wild || 0) + 1; atk.score = (atk.score || 0) + cfg.score.perWildCapture; }
+      const t = treasureAt(world, move.to);
+      if (t) addLog(state, `${atk.name} s'empare du trésor ${cfg.treasures.types[t].icon} ${cfg.treasures.types[t].name} !`, move.owner);
       if (def) {
         if (def.nest === move.to && def.queenAlive) {
           def.queenAlive = false;
           def.nest = null;
-          addLog(state, `${atk.name} a pris le nid de ${def.name} : leur reine est morte !`, move.owner);
+          addLog(state, `${atk.name} a pris le nid de ${def.name} : leur reine est morte, la colonie disparaît !`, move.owner);
         } else if (!atk.isAI || !def.isAI) {
           addLog(state, `${atk.name} a pris une case à ${defName}.`, move.owner);
         }
       }
     } else {
       const surv = scaleGroup(cell, r.ratio, false);
-      cell.w = surv.w; cell.s = surv.s; cell.e = surv.e;
+      cell.w = surv.w; cell.s = surv.s; cell.e = surv.e; cell.b = surv.b;
       if (!atk.isAI || (def && !def.isAI)) {
         addLog(state, `Attaque de ${atk.name} repoussée par ${defName}.`, def ? defOwner : move.owner);
       }
@@ -765,7 +796,7 @@
     const north = 45, south = -45, tropic = 0; // latitudes représentatives des trois zones de saison
     const per = [];
     for (const col of state.colonies) {
-      col.stats = { territories: 0, ants: 0, w: 0, s: 0, e: 0, power: 0, income: 0, upkeep: 0, layCost: 0, layRate: 0, spoil: 0, net: 0, cap: 0, idle: 0, missing: 0 };
+      col.stats = { territories: 0, ants: 0, w: 0, s: 0, e: 0, b: 0, power: 0, income: 0, upkeep: 0, layCost: 0, layRate: 0, spoil: 0, net: 0, cap: 0, idle: 0, missing: 0, points: 0, biomes: {}, treasures: {} };
       per[col.id] = {
         seasonN: seasonFactor(state, cfg, col, north), seasonS: seasonFactor(state, cfg, col, south), seasonT: seasonFactor(state, cfg, col, tropic),
         bonus: 1 + evoLevel(col, 'harvest') * cfg.evolutions.list.harvest.effect,
@@ -778,7 +809,16 @@
       const col = state.colonies[c.owner];
       const s = col.stats;
       s.territories++;
-      s.w += c.w; s.s += c.s; s.e += c.e;
+      s.w += c.w; s.s += c.s; s.e += c.e; s.b += c.b || 0;
+      const bio = world.cells[id].biome;
+      s.biomes[bio] = (s.biomes[bio] || 0) + 1;
+      const tr = treasureAt(world, id);
+      if (tr) {
+        const T = cfg.treasures.types[tr];
+        s.treasures[tr] = (s.treasures[tr] || 0) + 1;
+        s.income += T.food;
+        s.points += T.points;
+      }
       const opt = optimalWorkers(world, cfg, id);
       if (c.w > opt) s.idle += c.w - opt; else s.missing += opt - c.w;
       if (c.w > 0) {
@@ -790,13 +830,13 @@
     }
     for (const m of state.moves) {
       const s = state.colonies[m.owner].stats;
-      s.w += m.w; s.s += m.s; s.e += m.e;
+      s.w += m.w; s.s += m.s; s.e += m.e; s.b += m.b || 0;
     }
     for (const col of state.colonies) {
       const s = col.stats;
-      s.ants = s.w + s.s + s.e;
+      s.ants = s.w + s.s + s.e + s.b;
       s.power = power(s, cfg, col);
-      s.upkeep = s.w * K.w.upkeep + s.s * K.s.upkeep + s.e * K.e.upkeep;
+      s.upkeep = s.w * K.w.upkeep + s.s * K.s.upkeep + s.e * K.e.upkeep + s.b * K.b.upkeep;
       const granary = evoLevel(col, 'granary');
       s.cap = (cfg.food.storageBase + cfg.food.storagePerTerritory * s.territories) * (1 + granary * cfg.evolutions.list.granary.effect);
       s.layRate = layRate(state, world, cfg, col);
@@ -836,8 +876,20 @@
 
   /** Coût moyen d'un œuf selon la répartition des castes choisie. */
   function eggCost(cfg, col) {
-    const mix = cfg.castePresets[col.caste || 'balanced'].mix;
-    return CASTES.reduce((t, k) => t + mix[k] * cfg.castes[k].cost, 0);
+    const mix = mixFor(cfg, col);
+    return CASTES.reduce((t, k) => t + (mix[k] || 0) * cfg.castes[k].cost, 0);
+  }
+
+  /** Répartition de ponte effective : celle choisie, plus les combattants spéciaux débloqués. */
+  function mixFor(cfg, col) {
+    const base = cfg.castePresets[col.caste || 'balanced'].mix;
+    const out = { w: base.w || 0, s: base.s || 0, e: base.e || 0, b: 0 };
+    const B = cfg.castes.b;
+    if (col.unlocks && col.unlocks[B.unlock] && (out.s > 0.3)) {
+      out.b = B.layShare;
+      out.s -= B.layShare;
+    }
+    return out;
   }
 
   /** Nourriture qui se gâte en hiver (réduite par les greniers). */
@@ -863,9 +915,9 @@
 
   /** Choisit la caste du prochain œuf pour respecter la répartition demandée. */
   function nextCaste(cfg, col) {
-    const mix = cfg.castePresets[col.caste || 'balanced'].mix;
-    const acc = col.layAcc || (col.layAcc = { w: 0, s: 0, e: 0 });
-    for (const k of CASTES) acc[k] += mix[k];
+    const mix = mixFor(cfg, col);
+    const acc = col.layAcc || (col.layAcc = emptyGroup());
+    for (const k of CASTES) acc[k] = (acc[k] || 0) + (mix[k] || 0);
     let best = 'w';
     for (const k of CASTES) if (acc[k] > acc[best]) best = k;
     acc[best] -= 1;
@@ -945,44 +997,161 @@
     }
 
     refreshStats(state, world, cfg);
+
+    // 3. Trésors (points) et missions
+    for (const col of state.colonies) {
+      if (!col.alive || asleep(state, cfg, col)) continue;
+      col.score = (col.score || 0) + col.stats.points;
+    }
+    trackBeetle(state, world, cfg);
+    if (state.tick % cfg.missions.checkEvery === 0) checkMissions(state, world, cfg);
+
     checkEliminations(state, world, cfg);
-    checkVictory(state, world, cfg);
+    // Monde permanent : de nouvelles colonies IA remplacent celles qui ont disparu
+    if (state.tick % cfg.ai.respawnEvery === 0) {
+      const alive = state.colonies.filter((c) => c.isAI && c.alive).length;
+      if (alive < state.aiTarget) placeAIs(state, world, cfg, 1);
+    }
   }
 
+  // ---------- Missions ----------
+
+  /** Temps passé sans interruption par une colonie sur le scarabée géant (mission rare). */
+  function trackBeetle(state, world, cfg) {
+    if (!world.treasures) return;
+    let holder = -1;
+    for (const id in world.treasures) {
+      if (world.treasures[id] !== 'beetle') continue;
+      const c = state.cells[id];
+      if (c && c.owner >= 0) holder = c.owner;
+    }
+    if (holder !== state.beetleHolder) {
+      const prev = state.colonies[state.beetleHolder];
+      if (prev && prev.ctr) prev.ctr.beetleHold = 0;
+      state.beetleHolder = holder;
+    }
+    const col = state.colonies[holder];
+    if (col) { col.ctr = col.ctr || {}; col.ctr.beetleHold = (col.ctr.beetleHold || 0) + 1; }
+  }
+
+  /** Progression actuelle d'une mission (à comparer à m.goal). */
+  function missionProgress(state, world, cfg, col, m) {
+    const s = col.stats || {};
+    const ctr = col.ctr || {};
+    switch (m.k) {
+      case 'expand': return s.territories || 0;
+      case 'biome': return (s.biomes && s.biomes[m.biome]) || 0;
+      case 'army': return s.s || 0;
+      case 'wild': return (ctr.wild || 0) - (m.base || 0);
+      case 'enemy': return (ctr.enemy || 0) - (m.base || 0);
+      case 'treasure': return s.treasures && s.treasures[m.treasure] ? 1 : 0;
+      case 'stock': return Math.floor(col.food);
+      case 'evolve': return (ctr.evo || 0) - (m.base || 0);
+      case 'beetle': return ctr.beetleHold || 0;
+      default: return 0;
+    }
+  }
+
+  /** Tire une nouvelle mission adaptée à la colonie (jamais deux fois la même en même temps). */
+  function newMission(state, world, cfg, col) {
+    const L = cfg.missions.list;
+    const active = (col.missions || []).map((m) => m.k);
+    const ctr = col.ctr || {};
+    const s = col.stats || {};
+    const types = world.treasures ? Object.keys(world.treasures).map((id) => world.treasures[id]) : [];
+    const canRare = types.indexOf('beetle') >= 0 && !(col.unlocks && col.unlocks.beetle) && active.indexOf('beetle') < 0;
+    if (canRare && rand(state) < cfg.missions.rareChance) return { k: 'beetle', goal: L.beetle.holdTicks };
+    const others = state.colonies.some((c) => c.alive && c.id !== col.id);
+    const pool = ['expand', 'biome', 'army', 'wild', 'stock', 'evolve']
+      .concat(others ? ['enemy'] : [])
+      .concat(types.some((t) => t !== 'beetle' && !(s.treasures && s.treasures[t])) ? ['treasure', 'treasure'] : [])
+      .filter((k) => active.indexOf(k) < 0);
+    const k = pool[Math.floor(rand(state) * pool.length)] || 'expand';
+    const r = (a, b) => a + Math.floor(rand(state) * (b - a + 1));
+    switch (k) {
+      case 'expand': return { k, goal: (s.territories || 1) + r(4, 8) };
+      case 'biome': {
+        const list = Object.keys(cfg.biomes).filter((b) => b !== 'sand');
+        const biome = list[Math.floor(rand(state) * list.length)];
+        return { k, biome, goal: ((s.biomes && s.biomes[biome]) || 0) + r(2, 4) };
+      }
+      case 'army': return { k, goal: (s.s || 0) + r(12, 25) };
+      case 'wild': return { k, base: ctr.wild || 0, goal: r(4, 8) };
+      case 'enemy': return { k, base: ctr.enemy || 0, goal: r(1, 3) };
+      case 'treasure': {
+        const t = types.filter((x) => x !== 'beetle' && !(s.treasures && s.treasures[x]));
+        return { k, treasure: t[Math.floor(rand(state) * t.length)], goal: 1 };
+      }
+      case 'stock': return { k, goal: Math.round(Math.min((s.cap || 300) * 0.8, Math.max(150, col.food + 150)) / 10) * 10 };
+      case 'evolve': return { k, base: ctr.evo || 0, goal: 1 };
+      default: return { k: 'expand', goal: (s.territories || 1) + 5 };
+    }
+  }
+
+  /** Vérifie les missions des colonies humaines : récompense et remplacement des missions réussies. */
+  function checkMissions(state, world, cfg) {
+    for (const col of state.colonies) {
+      if (!col.alive || col.isAI || asleep(state, cfg, col)) continue;
+      col.missions = col.missions || [];
+      while (col.missions.length < cfg.missions.slots) col.missions.push(newMission(state, world, cfg, col));
+      for (let i = 0; i < col.missions.length; i++) {
+        const m = col.missions[i];
+        if (missionProgress(state, world, cfg, col, m) < m.goal) continue;
+        const def = cfg.missions.list[m.k];
+        col.score = (col.score || 0) + def.points;
+        col.food += def.food;
+        col.ctr.missions = (col.ctr.missions || 0) + 1;
+        let text = `${col.name} réussit une mission : +${def.points} points`;
+        if (def.unlock) {
+          col.unlocks = col.unlocks || {};
+          col.unlocks[def.unlock] = true;
+          state.unlockEvents.push({ uid: col.uid, key: def.unlock });
+          if (state.unlockEvents.length > 20) state.unlockEvents.splice(0, state.unlockEvents.length - 20);
+          text = `⭐ ${col.name} a débloqué les scarabées ! Sa reine pourra en pondre, dans cette colonie et les suivantes.`;
+        }
+        addLog(state, text, col.id);
+        col.missions[i] = newMission(state, world, cfg, col);
+      }
+    }
+  }
+
+  /** Une colonie disparaît si sa reine est morte (nid pris) ou si elle n'a plus aucune case. */
   function checkEliminations(state, world, cfg) {
     for (const col of state.colonies) {
       if (!col.alive) continue;
       const s = col.stats;
-      const dead = s.territories === 0 || (s.ants === 0 && !col.queenAlive);
+      const dead = s.territories === 0 || !col.queenAlive;
       if (!dead) continue;
       col.alive = false;
       col.queenAlive = false;
+      // Les fourmiz abandonnées redeviennent des insectes sauvages
       for (const id in state.cells) {
-        if (state.cells[id].owner === col.id) state.cells[id] = { owner: -1, w: 0, s: 0, e: 0 };
+        const c = state.cells[id];
+        if (c.owner === col.id) state.cells[id] = { owner: -1, w: Math.min(30, Math.ceil(total(c) / 2)), s: 0, e: 0, b: 0 };
       }
       state.moves = state.moves.filter((m) => m.owner !== col.id);
-      addLog(state, `${col.name} a disparu.`, col.id);
+      const score = Math.floor(col.score || 0);
+      addLog(state, `${col.name} a disparu (score ${score}).`, col.id);
+      recordHall(state, cfg, col, score);
+      // On allège la colonie morte (elle reste dans la liste pour garder les numéros des colonies)
+      for (const k of ['missions', 'ctr', 'evo', 'layAcc', 'stats']) delete col[k];
+      col.stats = {};
     }
   }
 
-  function checkVictory(state, world, cfg) {
-    const goal = Math.ceil(cfg.victory.landShare * state.landCount);
-    for (const col of state.colonies) {
-      if (col.alive && col.stats.territories >= goal) {
-        state.phase = 'over';
-        state.winner = col.id;
-        state.overTick = state.tick;
-        addLog(state, `${col.name} domine le monde !`, col.id);
-        return;
-      }
-    }
+  /** Tableau des records : les meilleurs scores des colonies disparues. */
+  function recordHall(state, cfg, col, score) {
+    if (score <= 0) return;
+    state.hall.push({ name: col.name, color: col.color, score, ai: !!col.isAI, tick: state.tick });
+    state.hall.sort((a, b) => b.score - a.score);
+    if (state.hall.length > cfg.score.hallSize) state.hall.length = cfg.score.hallSize;
   }
 
   const SIM = {
     CASTES, rand, hash01, total, power, scaleGroup, pickGroup, getCell, seasonAt, createWorldState, hydrate,
     joinColony, canFound, colonyOf, applyOrder, sendAnts, rally, findPath, pathLegs, pathCells, groupSpeed, tickMs, tickAt, onlineConfig, asleep,
-    autoBalanceWorkers, armyGroup,
-    setLayMode, setCaste, raiseQueen, evolve, evoLevel, evoCost, resolveCombat, forceNeeded, defenseFactor,
+    autoBalanceWorkers, armyGroup, treasureAt, missionProgress, newMission, mixFor, emptyGroup,
+    setLayMode, setCaste, evolve, evoLevel, evoCost, resolveCombat, forceNeeded, defenseFactor,
     defensePower, attackFactor, attackPreview, optimalWorkers, harvestInfo, logistics, travelTicks, refreshStats,
     step, wildGarrison, eggCost,
   };

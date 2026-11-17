@@ -42,12 +42,6 @@
       if (best && col.food > bestCost * 1.5) SIM.evolve(state, cfg, col.id, best);
     }
 
-    // Reine morte : en élever une nouvelle si possible
-    if (!col.queenAlive) {
-      const best = cells.slice().sort((a, b) => SIM.total(state.cells[b]) - SIM.total(state.cells[a]))[0];
-      if (best) SIM.raiseQueen(state, world, cfg, col.id, best);
-    }
-
     const keep = cfg.ai.keepHome;
     for (const id of cells) {
       const c = state.cells[id];
@@ -55,7 +49,7 @@
       // Fourmiz disponibles : on garde les ouvrières utiles et une petite garde
       const opt = SIM.optimalWorkers(world, cfg, id);
       const guard = id === col.nest ? keep * 3 : keep;
-      const avail = { w: Math.max(0, c.w - opt), s: Math.max(0, c.s - Math.ceil(guard / 3)), e: c.e };
+      const avail = { w: Math.max(0, c.w - opt), s: Math.max(0, c.s - Math.ceil(guard / 3)), e: c.e, b: id === col.nest ? 0 : (c.b || 0) };
       const availPow = SIM.power(avail, cfg, col);
       if (availPow < 2) continue;
 
@@ -79,6 +73,8 @@
         // On n'envoie que la part nécessaire (avec marge)
         const share = Math.min(1, (prev.defense * margin) / Math.max(0.01, prev.attack) + 0.05);
         let value = cfg.biomes[world.cells[nb].biome].food + 0.3;
+        const tr = SIM.treasureAt(world, nb);
+        if (tr) value += 3 + cfg.treasures.types[tr].points * 40;
         if (t.owner >= 0) {
           const enemy = state.colonies[t.owner];
           value += enemy.nest === nb && enemy.queenAlive ? 3 : 0.5;
