@@ -50,11 +50,12 @@
     </section>
 
     <nav id="tabs" role="tablist">
-      <button data-tab="colony" class="on" role="tab">🏠<span>Colonie</span></button>
-      <button data-tab="missions" role="tab">🎯<span>Missions</span></button>
-      <button data-tab="evos" role="tab">🧬<span>Évolutions</span></button>
-      <button data-tab="world" role="tab">🏆<span>Monde</span></button>
-      <button data-tab="help" role="tab">❓<span>Aide</span></button>
+      <button data-tab="colony" class="on" role="tab" title="Colonie">🏠<span>Colonie</span></button>
+      <button data-tab="missions" role="tab" title="Missions">🎯<span>Missions</span><i class="badge" id="tab-badge" hidden></i></button>
+      <button data-tab="evos" role="tab" title="Évolutions">🧬<span>Évolutions</span></button>
+      <button data-tab="world" role="tab" title="Classement, records, journal">🏆<span>Monde</span></button>
+      <button data-tab="help" role="tab" title="Aide">❓<span>Aide</span></button>
+      <button id="panel-close" class="tab-close" title="Replier le panneau (Échap)">«</button>
     </nav>
 
     <section id="colony" data-tab="colony">

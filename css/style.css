@@ -274,3 +274,21 @@ label.check { display: flex; gap: 6px; align-items: center; font-size: 13px; mar
   #panel.collapsed section[data-tab] { display: none; }
 }
 @media (prefers-color-scheme: dark) { #tabs button.on { background: rgba(255,255,255,.06); } #tpowers li { background: rgba(255,255,255,.05); } }
+
+/* ---------- Panneau repliable sur ordinateur : une barre d'icônes, le détail s'ouvre à la demande ---------- */
+.tab-close { display: none; }
+#tabs button { position: relative; }
+.badge { position: absolute; top: 2px; right: 8px; min-width: 16px; height: 16px; border-radius: 8px; background: var(--accent); color: #fff; font-size: 10px; font-style: normal; font-weight: 700; display: grid; place-items: center; padding: 0 4px; }
+@media (min-width: 721px) {
+  #panel { transition: width .18s ease; }
+  #panel:not(.collapsed) #tabs .tab-close { display: block; flex: 0 0 32px; font-size: 18px; color: var(--muted); }
+  #panel.collapsed { width: 60px; bottom: auto; overflow: visible; }
+  #panel.collapsed #tabs { flex-direction: column; padding: 6px; border-bottom: 0; gap: 4px; border-radius: var(--radius); }
+  #panel.collapsed #tabs button { border-bottom: 0; border-radius: 10px; padding: 8px 0; font-size: 20px; }
+  #panel.collapsed #tabs button span { display: none; }
+  #panel.collapsed #tabs button.on { background: none; }
+  #panel.collapsed #tabs button:hover { background: rgba(0,0,0,.06); }
+  #panel.collapsed section { display: none !important; }
+  #actionbar { left: 50%; width: min(440px, calc(100% - 160px)); }
+  body.panel-open #actionbar { left: calc(50% + 166px); width: min(420px, calc(100% - 380px)); }
+}

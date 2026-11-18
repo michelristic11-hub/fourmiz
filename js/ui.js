@@ -82,7 +82,7 @@
     // Panneau repliable (téléphone) et onglets
     const panel = $('#panel');
     let tab = 'colony';
-    let hadMe = false;
+    let hadMe = null;
     function showTab(t) {
       tab = t;
       document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === t));
@@ -93,9 +93,16 @@
       const b = e.target.closest('button[data-tab]');
       if (!b) return;
       const collapsed = panel.classList.contains('collapsed');
-      if (isPhone() && !collapsed && b.dataset.tab === tab) { setOpen(false); return; } // re-toucher l'onglet le referme
+      if (!collapsed && b.dataset.tab === tab) { setOpen(false); return; } // re-toucher l'onglet le referme
       showTab(b.dataset.tab);
-      if (isPhone() && collapsed) setOpen(true);
+      if (collapsed) setOpen(true);
+    });
+    $('#panel-close').addEventListener('click', () => setOpen(false));
+    document.addEventListener('keydown', (e) => {
+      if (e.target && /INPUT|TEXTAREA/.test(e.target.tagName)) return;
+      if (e.key === 'Escape') setOpen(false);
+      const keys = { 1: 'colony', 2: 'missions', 3: 'evos', 4: 'world', 5: 'help' };
+      if (keys[e.key]) { const t = keys[e.key]; if (!panel.classList.contains('collapsed') && t === tab) setOpen(false); else { showTab(t); setOpen(true); } }
     });
     function setOpen(open) {
       panel.classList.toggle('collapsed', !open);
@@ -243,7 +250,9 @@
       $('#evos').hidden = !me;
       document.querySelectorAll('#tabs button').forEach((b) => { b.hidden = !me && ['colony', 'missions', 'evos'].indexOf(b.dataset.tab) >= 0; });
       if (!me && ['colony', 'missions', 'evos'].indexOf(tab) >= 0) showTab('world');
-      if (me && !hadMe) showTab('colony');
+      // Sans colonie : panneau ouvert (formulaire de fondation). Dès qu'on joue : replié, la carte est libre.
+      if (me && !hadMe) { showTab('colony'); if (!isPhone()) setOpen(false); }
+      if (!me && hadMe !== false && !isPhone()) setOpen(true);
       hadMe = !!me;
       $('#missions').hidden = !me;
       $('#tabs').hidden = false;
@@ -263,6 +272,9 @@
         $('#st-score').textContent = fmt(me.score);
         const perMin = 60 / cfg.time.tickSeconds;
         const mh = (me.missions || []).map((m) => missionHTML(state, world, me, m)).join('');
+        const ready = (me.missions || []).filter((m) => SIM.missionProgress(state, world, cfg, me, m) >= m.goal * 0.8).length;
+        $('#tab-badge').hidden = !ready;
+        $('#tab-badge').textContent = ready;
         if ($('#mission-list').dataset.html !== mh) { $('#mission-list').innerHTML = mh; $('#mission-list').dataset.html = mh; }
         const th = treasureList(me);
         if ($('#tpowers').dataset.html !== th) { $('#tpowers').innerHTML = th; $('#tpowers').dataset.html = th; }
