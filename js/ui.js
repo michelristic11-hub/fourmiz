@@ -68,7 +68,8 @@
     $('#btn-new').addEventListener('click', () => { if (confirmNew()) act.newGame(); });
     $('#btn-rally').addEventListener('click', () => act.rally());
     $('#ab-close').addEventListener('click', () => act.closeSelection());
-    $('#auto-workers').addEventListener('change', (e) => act.autoWorkers(e.target.checked));
+    $('#with-hero').addEventListener('change', (e) => act.withHero(e.target.checked));
+    $('#go-hero').addEventListener('click', () => act.goHero());
     $('#overlay-btn').addEventListener('click', () => act.overlayButton());
     $('#btn-user').addEventListener('click', () => act.userButton());
     $('#btn-invite').addEventListener('click', () => act.invite());
@@ -78,17 +79,33 @@
     $('#zoom-in').addEventListener('click', () => act.zoomIn());
     $('#zoom-out').addEventListener('click', () => act.zoomOut());
 
-    // Panneau repliable (téléphone)
+    // Panneau repliable (téléphone) et onglets
     const panel = $('#panel');
-    $('#panel-toggle').addEventListener('click', () => {
-      panel.classList.toggle('collapsed');
-      const open = !panel.classList.contains('collapsed');
+    let tab = 'colony';
+    let hadMe = false;
+    function showTab(t) {
+      tab = t;
+      document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === t));
+      document.querySelectorAll('#panel section[data-tab]').forEach((sec) => sec.classList.toggle('tab-on', sec.dataset.tab === t));
+    }
+    showTab(tab);
+    $('#tabs').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-tab]');
+      if (!b) return;
+      const collapsed = panel.classList.contains('collapsed');
+      if (isPhone() && !collapsed && b.dataset.tab === tab) { setOpen(false); return; } // re-toucher l'onglet le referme
+      showTab(b.dataset.tab);
+      if (isPhone() && collapsed) setOpen(true);
+    });
+    function setOpen(open) {
+      panel.classList.toggle('collapsed', !open);
       $('#panel-toggle').setAttribute('aria-expanded', String(open));
       $('#panel-toggle-text').textContent = open ? 'Réduire' : 'Détails';
       document.body.classList.toggle('panel-open', open);
       if (open) panel.scrollTop = 0;
       syncPanelHeight();
-    });
+    }
+    $('#panel-toggle').addEventListener('click', () => setOpen(panel.classList.contains('collapsed')));
     function syncPanelHeight() {
       const h = isPhone() ? panel.offsetHeight : 0;
       document.documentElement.style.setProperty('--panel-h', h + 'px');
@@ -102,11 +119,18 @@
       return `<li><span class="sw" style="background:${b.color}"></span>${esc(b.name)}<span class="val">${fmt(b.food, 2)}</span></li>`;
     }).join('') + Object.keys(cfg.obstacles).map((k) =>
       `<li><span class="sw" style="background:${cfg.obstacles[k].color}"></span>${esc(cfg.obstacles[k].name)}<span class="val">✖</span></li>`).join('');
-    const perMin = 60 / cfg.time.tickSeconds;
-    $('#treasure-list').innerHTML = Object.keys(cfg.treasures.types).map((k) => {
-      const t = cfg.treasures.types[k];
-      return `<li><span class="ticon">${t.icon}</span>${esc(t.name)}<span class="val">+${fmt(t.points * perMin)} pts/min</span></li>`;
-    }).join('');
+
+    /** Liste des trésors et de leurs pouvoirs (✅ si la colonie le tient). */
+    function treasureList(me) {
+      const perMin = 60 / cfg.time.tickSeconds;
+      const held = (me && me.stats && me.stats.treasures) || {};
+      return Object.keys(cfg.treasures.types).map((k) => {
+        const t = cfg.treasures.types[k];
+        const on = held[k] > 0;
+        return `<li class="tp${on ? ' on' : ''}"><span class="ticon">${t.icon}</span><div><b>${esc(t.name)}</b> ${on ? '✅' : ''}` +
+          `<div class="hint">${esc(t.effect)} · +${fmt(t.points * perMin, 1)} pts/min</div></div></li>`;
+      }).join('');
+    }
 
     let confirmArmed = 0;
     function confirmNew() {
@@ -128,7 +152,7 @@
     function seasonLabel(state) {
       const s = SIM.seasonAt(state.tick, 45, cfg);
       const icon = ['🌱', '☀️', '🍂', '❄️'][s.index];
-      return `${icon} ${s.name} · An ${s.year}`;
+      return isPhone() ? `${icon} An ${s.year}` : `${icon} ${s.name} · An ${s.year}`;
     }
 
     /** Texte d'une mission, avec sa progression. */
@@ -144,7 +168,7 @@
       const p = Math.max(0, SIM.missionProgress(state, world, cfg, me, m));
       const pct = Math.min(100, (100 * p) / Math.max(1, m.goal));
       const shown = m.k === 'beetle' ? `${fmt((p * cfg.time.tickSeconds) / 60, 1)} / ${fmt((m.goal * cfg.time.tickSeconds) / 60)} min` : `${fmt(Math.min(p, m.goal))} / ${fmt(m.goal)}`;
-      const reward = `+${def.points} pts` + (def.food ? ` · +${def.food} 🍯` : '') + (def.unlock ? ' · 🪲 débloque les scarabées' : '');
+      const reward = `+${def.points} pts` + (def.food ? ` · +${def.food} 🍯` : '') + (def.unlock ? ' · 🪲 débloque le héros scarabée' : '');
       return `<li class="mission${def.rare ? ' rare' : ''}"><div class="m-text">${esc(text)}</div>` +
         `<div class="bar"><div style="width:${pct}%"></div></div><div class="hint">${shown} · ${reward}</div></li>`;
     }
@@ -163,8 +187,10 @@
       if (tr) {
         const T = cfg.treasures.types[tr];
         const perMin = 60 / cfg.time.tickSeconds;
-        html += `<div class="treasure">${T.icon} <b>${esc(T.name)}</b> : +${fmt(T.points * perMin, 1)} points/min et +${fmt(T.food / cfg.time.tickSeconds, 1)} nourriture/s pour qui le tient${tr === 'beetle' ? ' · ⭐ lié à la mission rare' : ''}</div>`;
+        html += `<div class="treasure">${T.icon} <b>${esc(T.name)}</b> : <b>${esc(T.effect)}</b> · +${fmt(T.points * perMin, 1)} pts/min · +${fmt(T.food / cfg.time.tickSeconds, 1)} nourriture/s${tr === 'beetle' ? ' · ⭐ mission rare' : ''}</div>`;
       }
+      if (isNest) html += `<div class="treasure">🛡️ Garde royale : <b>${fmt(owner.guard)}</b> / ${fmt(owner.stats.guardMax || SIM.guardMax(cfg, owner))} (se régénère)</div>`;
+      if (owner && SIM.heroAt(owner, id)) html += `<div class="treasure">${cfg.hero.icon} <b>Héros niveau ${owner.hero.lvl}</b> : force ×${fmt(SIM.heroBoost(cfg, owner.hero), 2)} et +${fmt(SIM.heroPower(cfg, owner.hero))}</div>`;
       if (sleeping && !mine) html += `<div class="hint">🛡️ Son joueur est absent : cette colonie dort et ne peut pas être attaquée.</div>`;
       html += `<div>${esc(b.name)} · ${owner ? castesLine(c, cfg) : `<b>${fmt(SIM.total(c))}</b> insectes`}</div>`;
       if (mine) {
@@ -197,7 +223,7 @@
 
     /**
      * Met à jour tout l'écran.
-     * @param {object} view { me, uid, selected, inspected, mode, hadColony, joinPending, net: { connected } }
+     * @param {object} view { me, uid, sendCaste, selected, inspected, mode, hadColony, joinPending, net: { connected } }
      */
     function update(state, world, view) {
       const me = view.me;
@@ -208,15 +234,20 @@
         const net = view.net || {};
         const el = $('#net');
         el.classList.toggle('off', !net.connected);
-        el.textContent = !net.connected ? '🔴 Hors ligne' : '🟢 En direct';
+        el.textContent = isPhone() ? (net.connected ? '🟢' : '🔴') : !net.connected ? '🔴 Hors ligne' : '🟢 En direct';
       }
 
       // Fonder une colonie / sa colonie
       $('#join').hidden = !!me;
       $('#colony').hidden = !me;
       $('#evos').hidden = !me;
-      $('#help').hidden = !me;
+      document.querySelectorAll('#tabs button').forEach((b) => { b.hidden = !me && ['colony', 'missions', 'evos'].indexOf(b.dataset.tab) >= 0; });
+      if (!me && ['colony', 'missions', 'evos'].indexOf(tab) >= 0) showTab('world');
+      if (me && !hadMe) showTab('colony');
+      hadMe = !!me;
       $('#missions').hidden = !me;
+      $('#tabs').hidden = false;
+      if (!me) $('#hud').hidden = true;
       if (!me) {
         const dead = view.uid ? state.colonies.filter((c) => c.uid === view.uid && !c.alive).pop() : null;
         $('#join-text').textContent = dead || view.hadColony
@@ -231,18 +262,28 @@
         $('#st-terr').textContent = fmt(s.territories);
         $('#st-score').textContent = fmt(me.score);
         const perMin = 60 / cfg.time.tickSeconds;
-        const unl = me.unlocks && me.unlocks.beetle;
-        $('#st-extra').innerHTML = (s.points > 0 ? `🏅 +${fmt(s.points * perMin, 1)} pts/min grâce à tes trésors · ` : '🏅 Prends des trésors pour gagner des points · ') +
-          (unl ? '🪲 Scarabées débloqués (ponte Équilibre ou Guerre)' : '🪲 Scarabées : à débloquer par la mission rare ⭐');
-        document.querySelector('#send-caste [data-caste="b"]').hidden = !unl;
         const mh = (me.missions || []).map((m) => missionHTML(state, world, me, m)).join('');
         if ($('#mission-list').dataset.html !== mh) { $('#mission-list').innerHTML = mh; $('#mission-list').dataset.html = mh; }
+        const th = treasureList(me);
+        if ($('#tpowers').dataset.html !== th) { $('#tpowers').innerHTML = th; $('#tpowers').dataset.html = th; }
+        $('#st-guard').innerHTML = `🛡️ Garde royale <b>${fmt(me.guard)}</b> / ${fmt(s.guardMax)} <span class="hint">· défend ton nid, grandit avec ta colonie</span>`;
+        const H = SIM.heroOf(me);
+        $('#st-hero').innerHTML = H
+          ? `${cfg.hero.icon} Héros niveau <b>${H.lvl}</b> · ${H.down ? `se soigne (retour dans ${duration(Math.max(0, H.down - state.tick), cfg)})` : H.cell ? 'prêt' : 'en route'}` +
+            ` <span class="hint">· xp ${fmt(H.xp)}${H.lvl < cfg.hero.xpLevels.length ? ' / ' + cfg.hero.xpLevels[H.lvl] : ''}</span>`
+          : `${cfg.hero.icon} Héros : <span class="hint">à débloquer avec la mission rare ⭐</span>`;
+        $('#go-hero').hidden = !(H && H.cell);
+        // Bandeau toujours visible
+        const near = (me.missions || []).map((m) => ({ m, p: Math.min(1, Math.max(0, SIM.missionProgress(state, world, cfg, me, m)) / Math.max(1, m.goal)) }))
+          .sort((a, b) => b.p - a.p)[0];
+        const netS = (s.net || 0) / cfg.time.tickSeconds;
+        $('#hud').hidden = false;
+        $('#hud').innerHTML = `<span title="Nourriture">🍯 ${fmt(me.food)} <small class="${netS >= 0 ? 'pos' : 'neg'}">${netS >= 0 ? '+' : ''}${fmt(netS, 1)}/s</small></span>` +
+          `<span title="Fourmiz">🐜 ${fmt(s.ants)}</span><span title="Score">🏅 ${fmt(me.score)}${s.points > 0 ? ` <small class="pos">+${fmt(s.points * perMin, 1)}/min</small>` : ''}</span>` +
+          (near ? `<span class="hud-m" title="Mission la plus avancée">🎯 ${fmt(near.p * 100)} %</span>` : '');
         $('#st-castes').innerHTML = `${castesLine(s, cfg)} <span class="hint">· force ${fmt(s.power)}</span>`;
-        const autoBox = $('#auto-workers');
-        if (document.activeElement !== autoBox) autoBox.checked = me.autoWorkers !== false;
-        $('#st-workers').innerHTML = (s.idle > 0.5 ? `🛌 ${fmt(s.idle)} ouvrières en trop` : '✅ aucune ouvrière inutile') +
-          (s.missing > 0.5 ? ` · <span class="neg">${fmt(s.missing)} manquent</span> sur tes cases` : '') +
-          (me.autoWorkers === false ? ' · utilise « Rassembler ici » ou glisse-les' : '');
+        $('#st-workers').innerHTML = '🔄 Ouvrières automatiques · ' + (s.idle > 0.5 ? `${fmt(s.idle)} en trop (elles rejoignent ton armée)` : 'aucune en trop') +
+          (s.missing > 0.5 ? ` · ${fmt(s.missing)} manquent, elles arrivent` : '');
         const net = s.net || 0;
         const perS = 1 / cfg.time.tickSeconds;
         $('#st-food-short').innerHTML = `${fmt(me.food)} <span class="${net >= 0 ? 'pos' : 'neg'}" style="font-size:12px">${net >= 0 ? '▲' : '▼'}</span>`;
@@ -272,6 +313,9 @@
       if (info) {
         $('#ab-info').innerHTML = cellCard(state, world, me, info);
         $('#ab-actions').hidden = !sel;
+        const heroHere = !!(sel && SIM.heroAt(me, sel));
+        document.querySelector('#send-caste [data-caste="hero"]').hidden = !heroHere;
+        $('#hero-toggle').hidden = !heroHere || view.sendCaste === 'hero';
       }
 
       // Classement
@@ -328,7 +372,8 @@
       const b = $('#btn-user');
       b.hidden = false;
       const name = user ? (user.displayName || 'Joueur').split(' ')[0] : '';
-      b.textContent = user ? (isPhone() ? 'Déconnexion' : `${name} · Déconnexion`) : 'Se connecter';
+      b.textContent = user ? (isPhone() ? '↪' : `${name} · Déconnexion`) : 'Se connecter';
+      b.title = user ? 'Se déconnecter' : '';
     }
 
     /** Petite fiche au survol d'une case (ordinateur uniquement). */

@@ -19,7 +19,7 @@ Pour la mise en ligne, suis **`MISE_EN_LIGNE.md`**. Tant que `js/firebase-config
 2. **But** : faire le meilleur **score**. Les **trésors** 🍬🍎🥖🍯🪲 rapportent des points tant que tu les tiens, les **missions** aussi. Le monde ne s'arrête jamais.
 3. **Ta reine** vit au nid 👑. Si un ennemi le prend, ta colonie disparaît et ton score entre aux **records**. Tu recommences avec une nouvelle colonie.
 4. **Ordres** : glisse d'une de tes cases vers une autre (ou touche une case, puis une case voisine). **Armée** (par défaut) envoie soldates, éclaireuses, scarabées et ouvrières en trop. **Rassembler ici** fait converger le surplus.
-5. **Castes** : ouvrières (récolte), soldates (force 3), éclaireuses (rapides, ×4 contre les insectes sauvages), et **scarabées** (force 14), débloqués pour toujours par la **mission rare ⭐** : tenir le scarabée géant au centre du jardin.
+5. **Castes** : les ouvrières se répartissent toutes seules ; tu commandes l'armée (soldates, éclaireuses) et le **héros scarabée** 🪲, débloqué pour toujours par la **mission rare ⭐** (tenir le scarabée géant au centre du jardin). Le nid est protégé par une **garde royale**, et chaque trésor donne un **pouvoir**.
 6. **Carte** : flaques et cailloux sont infranchissables ; tout le reste est relié. Molette ou pincement pour zoomer, boutons ＋/－.
 7. **Survie, évolutions, saisons** : chaque fourmi mange ; l'hiver la récolte chute. Les évolutions s'achètent avec de la nourriture.
 8. **En ligne** : ta colonie s'endort sous un **bouclier 🛡️** si tu pars plus de 10 minutes. Le bouton 📨 invite des amis.

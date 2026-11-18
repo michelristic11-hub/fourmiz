@@ -12,8 +12,9 @@
   <div id="map"></div>
 
   <header id="topbar">
-    <div class="brand">🐜 Fourmiz</div>
+    <div class="brand">🐜<span class="wide-only"> Fourmiz</span></div>
     <div id="season" class="pill">—</div>
+    <div id="hud" class="pill" hidden></div>
     <div class="speed solo-only" role="group" aria-label="Vitesse">
       <button data-speed="0" title="Pause">⏸</button>
       <button data-speed="1" class="on">x1</button>
@@ -32,6 +33,7 @@
   <nav id="mapbtns" aria-label="Aller à">
     <button id="go-nest" title="Aller à mon nid">👑</button>
     <button id="go-army" title="Aller à ma plus grosse armée">🐜</button>
+    <button id="go-hero" title="Aller à mon héros" hidden>🪲</button>
     <button id="go-all" title="Voir tout mon territoire">🗺️</button>
     <button id="zoom-in" title="Zoomer">＋</button>
     <button id="zoom-out" title="Dézoomer">－</button>
@@ -47,7 +49,15 @@
       <input id="join-name" maxlength="24" autocomplete="off" placeholder="Les Intrépides">
     </section>
 
-    <section id="colony">
+    <nav id="tabs" role="tablist">
+      <button data-tab="colony" class="on" role="tab">🏠<span>Colonie</span></button>
+      <button data-tab="missions" role="tab">🎯<span>Missions</span></button>
+      <button data-tab="evos" role="tab">🧬<span>Évolutions</span></button>
+      <button data-tab="world" role="tab">🏆<span>Monde</span></button>
+      <button data-tab="help" role="tab">❓<span>Aide</span></button>
+    </nav>
+
+    <section id="colony" data-tab="colony">
       <h2><span class="dot" id="col-dot"></span><span id="col-name">Ta colonie</span></h2>
       <div class="stat-row">
         <div class="stat"><span class="label">Fourmiz</span><span class="value" id="st-ants">0</span></div>
@@ -55,76 +65,64 @@
         <div class="stat"><span class="label">Nourriture</span><span class="value" id="st-food-short">0</span></div>
         <div class="stat"><span class="label">Score</span><span class="value" id="st-score">0</span></div>
       </div>
-      <div class="hint" id="st-extra"></div>
       <div class="castes" id="st-castes"></div>
-      <div class="auto-row">
-        <label><input type="checkbox" id="auto-workers" checked> 🔄 Répartition automatique des ouvrières</label>
-        <div class="hint" id="st-workers"></div>
+      <div class="hint" id="st-workers"></div>
+      <div class="infoline" id="st-guard"></div>
+      <div class="infoline" id="st-hero"></div>
+      <div class="food">
+        <div class="food-head"><span class="label">Réserve</span><span id="st-food">0 / 0</span></div>
+        <div class="bar"><div id="food-bar"></div></div>
+        <div class="food-detail" id="st-net">—</div>
       </div>
-      <div class="more">
-        <div class="food">
-          <div class="food-head"><span class="label">Réserve</span><span id="st-food">0 / 0</span></div>
-          <div class="bar"><div id="food-bar"></div></div>
-          <div class="food-detail" id="st-net">—</div>
+      <div class="lay">
+        <span class="label">Ponte de la reine <span id="st-queen">👑</span></span>
+        <div class="seg" id="lay-modes">
+          <button data-mode="stop">Arrêt</button>
+          <button data-mode="normal" class="on">Normale</button>
+          <button data-mode="intense">Intensive</button>
         </div>
-        <div class="lay">
-          <span class="label">Ponte de la reine <span id="st-queen">👑</span></span>
-          <div class="seg" id="lay-modes">
-            <button data-mode="stop">Arrêt</button>
-            <button data-mode="normal" class="on">Normale</button>
-            <button data-mode="intense">Intensive</button>
-          </div>
-          <span class="label">Castes pondues</span>
-          <div class="seg" id="caste-presets"></div>
-          <div class="hint" id="lay-info"></div>
-        </div>
+        <span class="label">Castes pondues</span>
+        <div class="seg" id="caste-presets"></div>
+        <div class="hint" id="lay-info"></div>
       </div>
     </section>
 
-    <section id="missions" class="more">
+    <section id="missions" data-tab="missions">
       <h3>Missions <span class="hint">⭐ = mission rare</span></h3>
       <ul id="mission-list"></ul>
+      <h3>Trésors <span class="hint">pouvoirs tant que tu les tiens</span></h3>
+      <ul id="tpowers"></ul>
     </section>
 
-    <section id="evos" class="more">
+    <section id="evos" data-tab="evos">
       <h3>Évolutions <span class="hint">payées en nourriture</span></h3>
       <div id="evo-list"></div>
     </section>
 
-    <section id="help" class="more">
-      <h3>Comment jouer</h3>
-      <ul class="tips">
-        <li><b>But</b> : faire le meilleur score. Les <b>trésors</b> 🍬🍎🥖🍯 rapportent des points tant que tu les tiens ; les <b>missions</b> aussi. Le monde ne s'arrête jamais : on va et on vient.</li>
-        <li><b>Ta reine</b> vit dans ton nid 👑. Si un ennemi le prend, ta colonie disparaît et ton score entre aux <b>records</b>. Tu peux alors recommencer.</li>
-        <li><b>Glisse</b> d'une de tes cases vers une autre pour envoyer des fourmiz, même loin : elles passent par tes galeries.</li>
-        <li>Ou <b>touche</b> une de tes cases, puis une case voisine surlignée.</li>
-        <li><b>Ouvrières</b> : elles récoltent. Chaque case a un nombre idéal d'ouvrières, et rapporte moins loin du nid.</li>
-        <li><b>Soldates</b> (force 3) : la conquête. <b>Éclaireuses</b> : deux fois plus rapides, jamais fatiguées, ×4 contre les insectes sauvages.</li>
-        <li><b>Scarabées</b> 🪲 (force 14) : à débloquer une fois pour toutes avec la <b>mission rare ⭐</b> (tenir le Scarabée géant au centre du jardin).</li>
-        <li><b>Armée</b> (choix par défaut) envoie soldates, éclaireuses, scarabées et ouvrières en trop, sans vider la récolte de la case.</li>
-        <li>Les <b>flaques</b> et les <b>cailloux</b> sont infranchissables : il faut les contourner. Tout le jardin reste accessible.</li>
-        <li class="online-only"><b>Bouclier 🛡️</b> : si tu quittes le jeu plus de 10 minutes, ta colonie s'endort. Personne ne peut l'attaquer, mais elle ne récolte et ne pond plus. Elle se réveille dès que tu reviens.</li>
-        <li><b>Rassembler ici</b> fait venir les fourmiz en trop de tout ton territoire. En hiver, la récolte chute et la réserve se gâte : prévois des stocks.</li>
-      </ul>
-    </section>
-
-    <section id="board" class="more">
+    <section id="board" data-tab="world">
       <h3>Classement <span class="hint">score des colonies en vie</span></h3>
       <ol id="ranking"></ol>
       <h3>🏆 Records <span class="hint">colonies disparues</span></h3>
       <ol id="hall"></ol>
-    </section>
-
-    <section id="legend" class="more">
-      <h3>Trésors</h3>
-      <ul id="treasure-list"></ul>
+      <h3>Journal</h3>
+      <ul id="log"></ul>
       <h3>Terrains <span class="hint">récolte par case</span></h3>
       <ul id="legend-list"></ul>
     </section>
 
-    <section id="journal" class="more">
-      <h3>Journal</h3>
-      <ul id="log"></ul>
+    <section id="help" data-tab="help">
+      <h3>Comment jouer</h3>
+      <ul class="tips">
+        <li><b>But</b> : faire le meilleur score. Les <b>trésors</b> 🍬🍎🥖🍯🪲 rapportent des points et donnent un <b>pouvoir</b> tant que tu les tiens ; les <b>missions</b> aussi rapportent des points. Le monde ne s'arrête jamais : on va et on vient.</li>
+        <li><b>Ta reine</b> vit dans ton nid 👑, protégé par une <b>garde royale</b> qui se régénère et grandit avec ta colonie. Si un ennemi prend le nid malgré tout, ta colonie disparaît et ton score entre aux <b>records</b>.</li>
+        <li><b>Glisse</b> d'une de tes cases vers une autre pour envoyer ton <b>armée</b>, même loin : elle passe par tes galeries. Ou <b>touche</b> une de tes cases, puis une case voisine surlignée.</li>
+        <li><b>Ouvrières</b> : automatiques. Elles se répartissent toutes seules là où il en manque pour récolter.</li>
+        <li><b>Armée</b> : soldates (force 3), éclaireuses (rapides, jamais fatiguées, ×4 contre les insectes sauvages) et ouvrières en trop.</li>
+        <li><b>Héros scarabée</b> 🪲 : débloqué une fois pour toutes par la <b>mission rare ⭐</b>. Tu le déplaces comme une pièce (« Héros seul ») ou il accompagne ton armée. Sur sa case, il renforce la défense ; en attaque, toute l'armée. Il gagne des niveaux en combattant ; vaincu, il revient au nid.</li>
+        <li>Les <b>flaques</b> et les <b>cailloux</b> sont infranchissables : il faut les contourner.</li>
+        <li class="online-only"><b>Bouclier 🛡️</b> : si tu quittes le jeu plus de 10 minutes, ta colonie s'endort : personne ne peut l'attaquer, mais elle ne récolte plus. Elle se réveille dès que tu reviens.</li>
+        <li><b>Rassembler ici</b> fait venir l'armée de tout ton territoire. En hiver, la récolte chute : prévois des stocks.</li>
+      </ul>
     </section>
   </aside>
 
@@ -134,15 +132,14 @@
       <button id="ab-close" class="icon" title="Fermer">✕</button>
     </div>
     <div id="ab-actions">
-      <span class="label">Fourmiz à envoyer</span>
+      <span class="label">Envoyer</span>
       <div class="seg" id="send-caste">
         <button data-caste="army" class="on" title="Soldates, éclaireuses et ouvrières en trop : la récolte de la case continue">🛡️ Armée</button>
         <button data-caste="s">⚔️ Soldates</button>
-        <button data-caste="e">💨 Éclair.</button>
-        <button data-caste="b" hidden>🪲 Scarab.</button>
-        <button data-caste="w">🐜 Ouvr.</button>
-        <button data-caste="all">Toutes</button>
+        <button data-caste="e">💨 Éclaireuses</button>
+        <button data-caste="hero" hidden title="Déplacer seulement le héros">🪲 Héros seul</button>
       </div>
+      <label id="hero-toggle" class="check" hidden><input type="checkbox" id="with-hero" checked> 🪲 Le héros accompagne l'armée</label>
       <div class="seg" id="send-share">
         <button data-share="0.25">25 %</button>
         <button data-share="0.5" class="on">50 %</button>

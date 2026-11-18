@@ -33,9 +33,27 @@
       w: { name: 'Ouvrière', plural: 'ouvrières', icon: '🐜', power: 1, upkeep: 0.04, cost: 1, speed: 1 },
       s: { name: 'Soldate', plural: 'soldates', icon: '⚔️', power: 3, upkeep: 0.08, cost: 2.5, speed: 1 },
       e: { name: 'Éclaireuse', plural: 'éclaireuses', icon: '💨', power: 0.6, upkeep: 0.04, cost: 1.5, speed: 0.5, wildBonus: 4 },
-      /** Scarabée : combattant spécial, à débloquer par la mission rare. layShare = part des œufs une fois débloqué. */
-      b: { name: 'Scarabée', plural: 'scarabées', icon: '🪲', power: 14, upkeep: 0.25, cost: 18, speed: 1.6, layShare: 0.03, unlock: 'beetle' },
+      /** Ancienne caste « scarabée » (remplacée par le héros) : n'est plus pondue, gardée pour les vieux mondes. */
+      b: { name: 'Scarabée', plural: 'scarabées', icon: '🪲', power: 14, upkeep: 0.25, cost: 18, speed: 1.6, layShare: 0, unlock: 'beetle' },
     },
+
+    /**
+     * Héros scarabée : une pièce unique que l'on déplace sur la carte (débloqué par la mission rare).
+     * Sur sa case (en défense) ou avec une armée (en attaque) : force × (1 + bonus + bonusPerLevel × (niveau − 1))
+     * et + power + powerPerLevel × (niveau − 1). Il gagne de l'expérience en combattant. Vaincu, il revient
+     * au nid après respawnTicks.
+     */
+    hero: {
+      name: 'Scarabée', icon: '🪲', bonus: 0.3, bonusPerLevel: 0.1, power: 10, powerPerLevel: 8,
+      xpLevels: [0, 3, 8, 15, 25], respawnTicks: 600,
+    },
+
+    /**
+     * Garde royale : chaque nid a une garde gratuite qui se régénère. Sa taille dépend de la colonie :
+     * guardBase + guardPerTerritory × territoires (au plus guardMax). regen = part du maximum regagnée par tick.
+     */
+    nest: { guardBase: 30, guardPerTerritory: 4, guardMax: 400, regen: 1 / 600 },
+
     /** Répartitions de ponte proposées au joueur (part de chaque caste). */
     castePresets: {
       harvest: { label: 'Récolte', mix: { w: 0.85, s: 0.1, e: 0.05 } },
@@ -130,22 +148,23 @@
 
     /**
      * Trésors : cases spéciales gardées par beaucoup d'insectes. Tant qu'on les tient, ils rapportent
-     * des points et de la nourriture à chaque tick. Le scarabée géant est unique (au centre de la carte).
+     * des points et de la nourriture à chaque tick, et donnent un pouvoir (power, non cumulable entre
+     * deux trésors du même type). Le scarabée géant est unique (au centre de la carte).
      */
     treasures: {
       minDistance: 7,
       types: {
-        sugar:  { name: 'Morceau de sucre', icon: '🍬', points: 0.05, food: 1.2, guard: 45 },
-        apple:  { name: 'Pomme tombée', icon: '🍎', points: 0.03, food: 2.0, guard: 35 },
-        crumbs: { name: 'Miettes de pique-nique', icon: '🥖', points: 0.04, food: 1.0, guard: 25 },
-        honey:  { name: 'Goutte de miel', icon: '🍯', points: 0.08, food: 0.6, guard: 60 },
-        beetle: { name: 'Scarabée géant', icon: '🪲', points: 0.12, food: 1.5, guard: 160, unique: true },
+        sugar:  { name: 'Morceau de sucre', icon: '🍬', points: 0.05, food: 1.2, guard: 45, power: { lay: 0.4 }, effect: 'Ponte +40 %' },
+        apple:  { name: 'Pomme tombée', icon: '🍎', points: 0.03, food: 2.0, guard: 35, power: { harvest: 0.25, storage: 0.5 }, effect: 'Récolte +25 %, réserve +50 %' },
+        crumbs: { name: 'Miettes de pique-nique', icon: '🥖', points: 0.04, food: 1.0, guard: 25, power: { upkeep: -0.25 }, effect: 'Les fourmiz mangent 25 % de moins' },
+        honey:  { name: 'Goutte de miel', icon: '🍯', points: 0.08, food: 0.6, guard: 60, power: { evo: -0.3 }, effect: 'Évolutions 30 % moins chères' },
+        beetle: { name: 'Scarabée géant', icon: '🪲', points: 0.12, food: 1.5, guard: 160, unique: true, power: { force: 0.2 }, effect: 'Toutes tes fourmiz +20 % de force' },
       },
     },
 
     /**
      * Missions : chaque colonie humaine a toujours 3 missions. Une mission réussie rapporte des points
-     * et de la nourriture, puis une nouvelle la remplace. La mission rare débloque le scarabée
+     * et de la nourriture, puis une nouvelle la remplace. La mission rare débloque le héros scarabée
      * pour toutes les colonies suivantes du joueur.
      */
     missions: {

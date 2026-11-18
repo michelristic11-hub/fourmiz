@@ -209,6 +209,7 @@
     // ---------- Dessin ----------
     function pathPoints(path) { return path.map((id) => world.cells[id]).filter(Boolean).map((c) => toScreen(c.x, c.y)); }
 
+    const emoji = (size) => `${size}px system-ui, "Segoe UI Emoji", "Apple Color Emoji", sans-serif`;
     function draw() {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.fillStyle = '#3b2e22';
@@ -280,6 +281,11 @@
         ctx.lineWidth = mine ? 2 : 1;
         ctx.strokeStyle = mine ? '#ffffff' : '#2b2118';
         ctx.stroke();
+        const fighters = (c.s || 0) + (c.e || 0);
+        if (fighters >= 5 && R >= 9) {
+          ctx.font = emoji(Math.max(8, R * 0.38));
+          ctx.fillText(c.s >= c.e ? '⚔️' : '💨', x + tx + rad * 0.85, y + tx - rad * 0.85);
+        }
         if (labels) {
           ctx.font = `bold ${Math.max(9, Math.min(14, R * 0.5))}px system-ui, sans-serif`;
           ctx.lineWidth = 3;
@@ -298,6 +304,28 @@
         if (!visible(x, y)) continue;
         ctx.font = `${Math.max(11, R * 0.9)}px system-ui, "Segoe UI Emoji", "Apple Color Emoji", sans-serif`;
         ctx.fillText('👑', x, y - R * 0.75);
+      }
+
+      // Héros scarabées
+      for (const col of state.colonies) {
+        const h = col.alive && col.unlocks && col.unlocks.beetle && col.hero;
+        if (!h || h.down || !h.cell || !world.cells[h.cell]) continue;
+        const w = world.cells[h.cell];
+        const [x0, y0] = toScreen(w.x, w.y);
+        if (!visible(x0, y0)) continue;
+        const x = x0 - R * 0.55, y = y0 + R * 0.45;
+        ctx.beginPath();
+        ctx.arc(x, y, Math.max(7, R * 0.42), 0, 7);
+        ctx.fillStyle = col.color;
+        ctx.fill();
+        ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke();
+        ctx.font = emoji(Math.max(10, R * 0.6));
+        ctx.fillText('🪲', x, y + 1);
+        if (R >= 12) {
+          ctx.font = `bold ${Math.max(8, R * 0.32)}px system-ui, sans-serif`;
+          ctx.fillStyle = '#1b140e';
+          ctx.fillText(String(h.lvl || 1), x + R * 0.38, y - R * 0.32);
+        }
       }
 
       // Colonnes en marche
@@ -332,6 +360,7 @@
         ctx.lineWidth = 2;
         ctx.strokeStyle = '#fff';
         ctx.stroke();
+        if (m.h) { ctx.font = emoji(Math.max(10, R * 0.6)); ctx.fillText('🪲', x, y - R * 0.5); }
       }
       drawPreview();
     }

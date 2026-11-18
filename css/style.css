@@ -37,6 +37,7 @@ body {
 #map { position: absolute; inset: 0; background: #3b2e22; overflow: hidden; }
 #map canvas { display: block; touch-action: none; user-select: none; -webkit-user-select: none; }
 button { font: inherit; color: inherit; cursor: pointer; }
+[hidden] { display: none !important; }
 h1, h2, h3 { margin: 0; }
 h2 { font-size: 16px; display: flex; align-items: center; gap: 8px; }
 h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 8px; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
@@ -244,3 +245,32 @@ body.mode-solo .online-only, body.mode-online .solo-only { display: none !import
 #hall .name { flex: 1; }
 #st-extra { margin: 4px 0; }
 @media (prefers-color-scheme: dark) { .mission { background: rgba(255,255,255,.06); } .mission .bar { background: rgba(255,255,255,.12); } }
+
+/* Onglets du panneau */
+#tabs { display: flex; gap: 2px; padding: 8px 8px 0; position: sticky; top: 0; background: var(--panel); z-index: 2; border-bottom: 1px solid var(--line); }
+#tabs button { flex: 1; border: 0; background: none; padding: 6px 2px 8px; font-size: 18px; display: flex; flex-direction: column; align-items: center; gap: 2px; border-bottom: 3px solid transparent; border-radius: 6px 6px 0 0; }
+#tabs button span { font-size: 11px; color: var(--muted); }
+#tabs button.on { border-bottom-color: var(--accent); background: rgba(0,0,0,.04); }
+#tabs button.on span { color: var(--ink); font-weight: 700; }
+#panel section[data-tab]:not(.tab-on) { display: none; }
+#panel section[data-tab] h3 { margin-top: 6px; }
+.infoline { font-size: 13px; margin: 4px 0; }
+label.check { display: flex; gap: 6px; align-items: center; font-size: 13px; margin: 2px 0 6px; cursor: pointer; }
+#tpowers { list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 6px; }
+#tpowers li { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; padding: 6px 8px; border-radius: 8px; background: rgba(0,0,0,.03); }
+#tpowers li.on { background: rgba(138,201,38,.18); outline: 1px solid rgba(138,201,38,.5); }
+#tpowers .ticon { font-size: 18px; }
+
+/* Bandeau toujours visible */
+#hud { display: flex; gap: 12px; align-items: center; font-variant-numeric: tabular-nums; }
+#hud[hidden] { display: none; }
+#hud small { font-size: 11px; }
+#hud .hud-m { color: var(--accent); font-weight: 700; }
+@media (max-width: 720px) {
+  #hud { position: absolute; top: 52px; left: 8px; right: 8px; justify-content: space-between; gap: 6px; font-size: 13px; z-index: 6; }
+  #mapbtns { top: 96px !important; }
+  #toast { top: 146px !important; }
+  #tabs button { font-size: 16px; padding: 4px 2px 6px; }
+  #panel.collapsed section[data-tab] { display: none; }
+}
+@media (prefers-color-scheme: dark) { #tabs button.on { background: rgba(255,255,255,.06); } #tpowers li { background: rgba(255,255,255,.05); } }

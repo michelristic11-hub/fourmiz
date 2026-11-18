@@ -55,9 +55,9 @@ function throughFirebase(state) {
   return strip(clone(state));
 }
 
-function worldWithPlayer(world, cfg = cfgNoAI()) {
+function worldWithPlayer(world, cfg = cfgNoAI(), unlocks) {
   const s = SIM.createWorldState(world, cfg, { seed: 42 });
-  const r = SIM.applyOrder(s, world, cfg, { uid: 'u1', type: 'join', name: 'Alice', cell: 'c5_5' });
+  const r = SIM.applyOrder(s, world, cfg, { uid: 'u1', type: 'join', name: 'Alice', cell: 'c5_5', unlocks });
   assert.ok(r.ok, r.reason);
   return s;
 }
@@ -498,7 +498,7 @@ test('missions : 3 missions, récompense et remplacement', () => {
   }
 });
 
-test('mission rare : tenir le scarabée géant débloque les scarabées, pondus ensuite', () => {
+test('mission rare : tenir le scarabée géant débloque le héros, gardé pour la colonie suivante', () => {
   const w = fakeWorld();
   w.treasures = { c7_5: 'beetle' };
   const cfg = cfgNoAI();
@@ -510,21 +510,93 @@ test('mission rare : tenir le scarabée géant débloque les scarabées, pondus 
   for (let i = 0; i < 60; i++) SIM.step(s, w, cfg);
   assert.strictEqual(me.unlocks.beetle, true);
   assert.deepStrictEqual(s.unlockEvents[s.unlockEvents.length - 1], { uid: 'u1', key: 'beetle' });
-  // Ponte : une petite part de scarabées en mode Guerre
-  SIM.setCaste(s, cfg, me.id, 'war');
-  me.food = 100000;
-  let born = 0;
-  for (let i = 0; i < 400; i++) { SIM.step(s, w, cfg); me.food = 100000; }
-  for (const id in s.cells) if (s.cells[id].owner === me.id) born += s.cells[id].b || 0;
-  assert.ok(born > 0, 'des scarabées sont nés');
+  assert.ok(me.hero && me.hero.cell === 'c5_5' && me.hero.lvl === 1, 'le héros apparaît au nid');
+  assert.strictEqual(SIM.mixFor(cfg, me).b, 0, 'plus de ponte de scarabées');
   // Le joueur garde le déblocage pour sa colonie suivante
   const s2 = SIM.createWorldState(w, cfg, { seed: 2, aiCount: 0 });
   SIM.applyOrder(s2, w, cfg, { uid: 'u1', type: 'join', name: 'A2', cell: 'c5_5', unlocks: { beetle: true } });
-  assert.strictEqual(SIM.colonyOf(s2, 'u1').unlocks.beetle, true);
-  // Sans déblocage : pas de scarabée
+  assert.ok(SIM.colonyOf(s2, 'u1').hero, 'héros dès la fondation');
   const s3 = SIM.createWorldState(w, cfg, { seed: 2, aiCount: 0 });
   SIM.applyOrder(s3, w, cfg, { uid: 'u9', type: 'join', name: 'Z', cell: 'c5_5' });
-  assert.strictEqual(SIM.mixFor(cfg, SIM.colonyOf(s3, 'u9')).b, 0);
+  assert.ok(!SIM.colonyOf(s3, 'u9').hero);
+});
+
+test('héros : se déplace seul, renforce sa case, accompagne une attaque et gagne de l’expérience', () => {
+  const w = fakeWorld();
+  const cfg = cfgNoAI();
+  const s = worldWithPlayer(w, cfg, { beetle: true });
+  const me = SIM.colonyOf(s, 'u1');
+  const h = me.hero;
+  s.cells.c6_5 = { owner: me.id, w: 10, s: 0, e: 0, b: 0 };
+  // Défense renforcée sur sa case
+  const before = SIM.defensePower(s, w, cfg, 'c6_5');
+  let r = SIM.applyOrder(s, w, cfg, { uid: 'u1', type: 'hero', to: 'c6_5' });
+  assert.ok(r.ok, r.reason);
+  assert.strictEqual(h.cell, null, 'en route');
+  for (let i = 0; i < 20; i++) SIM.step(s, w, cfg);
+  assert.strictEqual(h.cell, 'c6_5');
+  assert.ok(SIM.defensePower(s, w, cfg, 'c6_5') > before * 1.3);
+  // Attaque avec le héros : plus forte que sans
+  const g = { w: 0, s: 5, e: 0, b: 0 };
+  const without = SIM.attackPreview(s, w, cfg, me.id, ['c6_5', 'c7_5'], g).attack;
+  const withH = SIM.attackPreview(s, w, cfg, me.id, ['c6_5', 'c7_5'], Object.assign({ h: 1 }, g)).attack;
+  assert.ok(withH > without * 1.3 + cfg.hero.power);
+  s.cells.c6_5.s = 5;
+  r = SIM.applyOrder(s, w, cfg, { uid: 'u1', type: 'send', from: 'c6_5', to: 'c7_5', w: 0, s: 5, e: 0, hero: true });
+  assert.ok(r.ok, r.reason);
+  for (let i = 0; i < 20; i++) SIM.step(s, w, cfg);
+  assert.strictEqual(s.cells.c7_5.owner, me.id);
+  assert.strictEqual(h.cell, 'c7_5');
+  assert.ok(h.xp >= 1);
+  // Vaincu : revient au nid plus tard
+  s.cells.c8_5 = { owner: -1, w: 5000, s: 0, e: 0, b: 0 };
+  r = SIM.applyOrder(s, w, cfg, { uid: 'u1', type: 'hero', to: 'c8_5' });
+  assert.ok(r.ok, r.reason);
+  for (let i = 0; i < 20; i++) SIM.step(s, w, cfg);
+  assert.ok(h.down > 0 && h.cell === null, 'vaincu');
+  for (let i = 0; i < cfg.hero.respawnTicks + 5; i++) SIM.step(s, w, cfg);
+  assert.strictEqual(h.cell, me.nest, 'de retour au nid');
+});
+
+test('garde royale : le nid se défend tout seul et la garde se régénère', () => {
+  const w = fakeWorld();
+  const cfg = cfgNoAI();
+  const s = worldWithPlayer(w, cfg);
+  const me = SIM.colonyOf(s, 'u1');
+  s.cells.c5_5 = { owner: me.id, w: 0, s: 0, e: 0, b: 0 };
+  me.guard = SIM.guardMax(cfg, me);
+  assert.ok(SIM.defensePower(s, w, cfg, 'c5_5') >= me.guard * cfg.combat.defenderBonus * cfg.combat.nestBonus * 0.99);
+  // Un petit raid échoue et entame la garde
+  SIM.applyOrder(s, w, cfg, { uid: 'u2', type: 'join', name: 'Bob', cell: 'c9_5' });
+  const bob = SIM.colonyOf(s, 'u2');
+  s.cells.c6_5 = { owner: bob.id, w: 0, s: 15, e: 0, b: 0 };
+  SIM.applyOrder(s, w, cfg, { uid: 'u2', type: 'send', from: 'c6_5', to: 'c5_5', w: 0, s: 15, e: 0 });
+  for (let i = 0; i < 10; i++) SIM.step(s, w, cfg);
+  assert.ok(me.alive, 'nid tenu');
+  const hurt = me.guard;
+  assert.ok(hurt < SIM.guardMax(cfg, me));
+  for (let i = 0; i < 100; i++) SIM.step(s, w, cfg);
+  assert.ok(me.guard > hurt, 'régénération');
+  assert.ok(SIM.guardMax(cfg, { stats: { territories: 50 } }) > SIM.guardMax(cfg, { stats: { territories: 1 } }), 'plus grande avec la colonie');
+});
+
+test('trésors : chaque type donne son pouvoir', () => {
+  const w = fakeWorld();
+  w.treasures = { c6_5: 'sugar', c7_5: 'apple', c8_5: 'crumbs', c9_5: 'honey', c10_5: 'beetle' };
+  const cfg = cfgNoAI();
+  const s = worldWithPlayer(w, cfg);
+  const me = SIM.colonyOf(s, 'u1');
+  s.cells.c4_5 = { owner: me.id, w: 0, s: 10, e: 0, b: 0 };
+  SIM.refreshStats(s, w, cfg);
+  const base = { lay: me.stats.layRate, cap: me.stats.cap, up: me.stats.upkeep, evo: SIM.evoCost(cfg, me, 'jaws') };
+  const def0 = SIM.defensePower(s, w, cfg, 'c4_5');
+  for (const id of Object.keys(w.treasures)) s.cells[id] = { owner: me.id, w: 0, s: 0, e: 0, b: 0 };
+  SIM.refreshStats(s, w, cfg);
+  assert.ok(me.stats.layRate > base.lay * 1.3, 'sucre : ponte');
+  assert.ok(me.stats.cap > base.cap * 1.4, 'pomme : réserve');
+  assert.ok(me.stats.upkeep < base.up * 0.8, 'miettes : entretien');
+  assert.ok(SIM.evoCost(cfg, me, 'jaws') < base.evo * 0.75, 'miel : évolutions');
+  assert.ok(SIM.defensePower(s, w, cfg, 'c4_5') > def0 * 1.15, 'scarabée géant : force');
 });
 
 test('jardin réel : une partie avec IA tourne vite et sans erreur', () => {

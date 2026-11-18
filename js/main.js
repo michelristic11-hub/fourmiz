@@ -21,6 +21,7 @@
   let inspected = null;  // autre case touchée (fiche seule)
   let share = 0.5;
   let sendCaste = 'army'; // castes envoyées : 'army' | 'all' | 'w' | 's' | 'e'
+  let withHero = true;   // le héros accompagne l'armée envoyée depuis sa case
   let pendingJump = null; // expédition en attente de confirmation (toucher deux fois)
   let dirty = true;
   let hadColony = false;
@@ -59,7 +60,15 @@
 
   /** Groupe de fourmiz qui partirait de cette case avec les réglages choisis. */
   function groupFrom(from) {
-    if (sendCaste === 'army') return SIM.armyGroup(world, cfg, from, state.cells[from], share);
+    const m = me();
+    const heroHere = m && SIM.heroAt(m, from);
+    if (sendCaste === 'hero' && heroHere) return { w: 0, s: 0, e: 0, b: 0, h: 1 };
+    const g = rawGroup(from);
+    if (heroHere && withHero) g.h = 1;
+    return g;
+  }
+  function rawGroup(from) {
+    if (sendCaste === 'army' || sendCaste === 'hero') return SIM.armyGroup(world, cfg, from, state.cells[from], share);
     return SIM.pickGroup(state.cells[from], sendCaste, share);
   }
 
@@ -68,7 +77,8 @@
     const legs = SIM.pathLegs(state, world, cfg, m.id, path, g);
     const eta = (jump ? '🌊 expédition · ' : '') + ui.duration(legs[legs.length - 1]);
     const to = path[path.length - 1];
-    if (mine(to, m)) return { ok: true, text: `${ui.castesLine(g)} en renfort · ${eta}` };
+    const who = (SIM.total(g) > 0 ? ui.castesLine(g) : '') + (g.h ? (SIM.total(g) > 0 ? ' + ' : '') + '🪲 héros' : '');
+    if (mine(to, m)) return { ok: true, text: `${who} ${g.h && SIM.total(g) < 1 ? 'se déplace' : 'en renfort'} · ${eta}` };
     const p = SIM.attackPreview(state, world, cfg, m.id, path, g);
     const mods = [];
     if (p.encircle > 1) mods.push(`encerclement +${Math.round((p.encircle - 1) * 100)} %`);
@@ -84,13 +94,14 @@
   function sendFrom(from, to) {
     const m = me();
     const src = state.cells[from];
-    if (!m || !src || SIM.total(src) < 1) return ui.say('Plus aucune fourmi sur cette case.');
+    if (!m || !src || (SIM.total(src) < 1 && !SIM.heroAt(m, from))) return ui.say('Plus aucune fourmi sur cette case.');
     const g = groupFrom(from);
-    if (SIM.total(g) < 1) return ui.say('Aucune fourmi de cette caste sur la case.');
+    if (SIM.total(g) < 1 && !g.h) return ui.say(sendCaste === 'hero' ? 'Ton héros n’est pas sur cette case.' : 'Aucune fourmi de cette caste sur la case.');
     const p = SIM.findPath(state, world, cfg, m.id, from, to);
     if (!p.ok) return ui.say(p.reason);
     const d = describeSend(m, p.path, g, p.jump);
-    send({ type: 'send', from, to, w: g.w, s: g.s, e: g.e, b: g.b || 0 }, d.text);
+    if (g.h && SIM.total(g) < 1) send({ type: 'hero', to }, '🪲 ' + d.text);
+    else send({ type: 'send', from, to, w: g.w, s: g.s, e: g.e, b: g.b || 0, hero: !!g.h }, (g.h ? '🪲 ' : '') + d.text);
   }
 
   function onClick(id) {
@@ -134,7 +145,7 @@
   const drag = {
     canDrag(id, isTouch) {
       const m = me();
-      if (!m || !state || state.phase !== 'playing' || !mine(id, m) || SIM.total(state.cells[id]) < 1) return false;
+      if (!m || !state || state.phase !== 'playing' || !mine(id, m) || (SIM.total(state.cells[id]) < 1 && !SIM.heroAt(m, id))) return false;
       return isTouch ? id === selected : true; // au doigt : d'abord toucher la case, puis glisser
     },
     dragOver(from, over, point) {
@@ -145,7 +156,7 @@
       if (!p.ok) { gm.showPath(null); ui.dragTip('🚫 ' + p.reason, point); return; }
       gm.showPath(p.path, m.color);
       const g = groupFrom(from);
-      if (SIM.total(g) < 1) { ui.dragTip('🚫 Aucune fourmi de cette caste ici', point); return; }
+      if (SIM.total(g) < 1 && !g.h) { ui.dragTip('🚫 Aucune fourmi de cette caste ici', point); return; }
       ui.dragTip(describeSend(m, p.path, g, p.jump).text, point);
     },
     dragEnd(from, to) {
@@ -164,7 +175,13 @@
   const actions = {
     speed(v) { if (backend.setSpeed) backend.setSpeed(v); },
     share(v) { share = v; },
-    sendCaste(v) { sendCaste = v; },
+    sendCaste(v) { sendCaste = v; dirty = true; },
+    withHero(v) { withHero = v; },
+    goHero() {
+      const m = me();
+      const h = m && SIM.heroOf(m);
+      if (h && h.cell) { gm.flyTo(h.cell, 5); selected = h.cell; dirty = true; }
+    },
     autoWorkers(on) {
       send({ type: 'auto', on }, on ? '🔄 Les ouvrières inutiles iront où il en manque.' : 'Répartition automatique coupée.');
     },
@@ -259,7 +276,7 @@
   }
   function renderUI() {
     ui.update(state, world, {
-      me: me(), uid: backend.uid, selected, inspected, mode, hadColony, joinPending,
+      me: me(), uid: backend.uid, sendCaste, selected, inspected, mode, hadColony, joinPending,
       net: mode === 'online' ? { connected: backend.connected } : null,
     });
   }

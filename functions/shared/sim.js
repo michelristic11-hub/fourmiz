@@ -22,6 +22,8 @@
   'use strict';
 
   const CASTES = ['w', 's', 'e', 'b'];
+  /** Valeurs par défaut pour hydrate() appelé sans configuration. */
+  const DEFAULTS = { nest: { guardBase: 30 } };
   const emptyGroup = () => ({ w: 0, s: 0, e: 0, b: 0 });
 
   // ---------- Hasard reproductible ----------
@@ -109,6 +111,55 @@
     return (world.treasures && world.treasures[id]) || null;
   }
 
+  /** Pouvoir cumulé des trésors tenus par une colonie (un seul compte par type). key : lay, harvest, storage, upkeep, evo, force. */
+  function tpow(cfg, col, key) {
+    const held = col && col.stats && col.stats.treasures;
+    if (!held || !cfg.treasures) return 0;
+    let v = 0;
+    for (const t in held) {
+      const P = held[t] > 0 && cfg.treasures.types[t] && cfg.treasures.types[t].power;
+      if (P && P[key]) v += P[key];
+    }
+    return v;
+  }
+
+  // ---------- Héros scarabée ----------
+
+  /** Le héros de la colonie s'il est débloqué (sinon null). */
+  function heroOf(col) { return col && col.unlocks && col.unlocks.beetle && col.hero ? col.hero : null; }
+  function ensureHero(state, cfg, col) {
+    if (col && col.alive !== false && col.unlocks && col.unlocks.beetle && !col.hero) {
+      col.hero = { cell: col.nest, lvl: 1, xp: 0, down: 0 };
+    }
+  }
+  /** Le héros se bat-il sur cette case (posé dessus, pas vaincu) ? */
+  function heroAt(col, id) { const h = heroOf(col); return !!(h && !h.down && h.cell === id); }
+  function heroBoost(cfg, h) { return 1 + cfg.hero.bonus + cfg.hero.bonusPerLevel * ((h.lvl || 1) - 1); }
+  function heroPower(cfg, h) { return cfg.hero.power + cfg.hero.powerPerLevel * ((h.lvl || 1) - 1); }
+  function heroXp(state, cfg, col, n) {
+    const h = heroOf(col);
+    if (!h) return;
+    h.xp = (h.xp || 0) + n;
+    let lvl = 0;
+    for (const x of cfg.hero.xpLevels) if (h.xp >= x) lvl++;
+    if (lvl > (h.lvl || 1)) { h.lvl = lvl; addLog(state, `${cfg.hero.icon} Le héros de ${col.name} passe niveau ${lvl} !`, col.id); }
+  }
+  function heroDown(state, cfg, col) {
+    const h = heroOf(col);
+    if (!h) return;
+    h.cell = null;
+    h.down = state.tick + cfg.hero.respawnTicks;
+    addLog(state, `${cfg.hero.icon} Le héros de ${col.name} est vaincu ; il rentre se soigner au nid.`, col.id);
+  }
+
+  // ---------- Garde royale ----------
+
+  function guardMax(cfg, col) {
+    const N = cfg.nest;
+    const t = (col.stats && col.stats.territories) || 1;
+    return Math.min(N.guardMax, N.guardBase + N.guardPerTerritory * t);
+  }
+
   /** Renvoie l'état d'une case (owner = -1 pour neutre). Ne modifie pas l'état. */
   function getCell(state, world, cfg, id) {
     const c = state.cells[id];
@@ -136,7 +187,7 @@
     const e = cfg.evolutions.list[key];
     const lvl = evoLevel(col, key);
     if (!e || lvl >= cfg.evolutions.maxLevel) return null;
-    return Math.round(e.cost * Math.pow(cfg.evolutions.costGrowth, lvl));
+    return Math.round(e.cost * Math.pow(cfg.evolutions.costGrowth, lvl) * (1 + tpow(cfg, col, 'evo')));
   }
 
   /** Achète le niveau suivant d'une évolution. */
@@ -264,8 +315,9 @@
    * Remet en forme un état relu depuis la base de données (Firebase supprime les tableaux
    * et objets vides) et met à niveau les mondes des versions précédentes.
    */
-  function hydrate(state) {
+  function hydrate(state, cfg) {
     if (!state) return state;
+    const cfg0 = cfg || DEFAULTS;
     state.colonies = toArray(state.colonies);
     state.moves = toArray(state.moves);
     state.log = toArray(state.log);
@@ -285,6 +337,8 @@
       col.ctr = col.ctr || {};
       col.unlocks = col.unlocks || {};
       col.score = col.score || 0;
+      if (col.guard == null) col.guard = cfg0.nest.guardBase;
+      ensureHero(state, cfg0, col);
     }
     for (const id in state.cells) {
       const c = state.cells[id];
@@ -354,6 +408,8 @@
       ctr: {},
       /** Combattants spéciaux débloqués (gardés d'une colonie à l'autre pour un même joueur). */
       unlocks: {},
+      /** Garde royale du nid (se régénère, voir cfg.nest). */
+      guard: cfg.nest.guardBase,
       alive: true,
       stats: {},
     };
@@ -412,6 +468,7 @@
     col.bornTick = state.tick;
     col.nest = id;
     if (who.unlocks) for (const k in who.unlocks) if (who.unlocks[k] === true) col.unlocks[k] = true;
+    ensureHero(state, cfg, col);
     state.colonies.push(col);
     state.cells[id] = Object.assign({ owner: col.id }, startGarrison(cfg));
     refreshStats(state, world, cfg);
@@ -484,7 +541,11 @@
       } else {
         g = { w: Number(order.w) || 0, s: Number(order.s) || 0, e: Number(order.e) || 0, b: Number(order.b) || 0 };
       }
-      r = sendAnts(state, world, cfg, col.id, String(order.from), String(order.to), g);
+      r = sendAnts(state, world, cfg, col.id, String(order.from), String(order.to), g, !!order.hero);
+    } else if (order.type === 'hero') {
+      const h = heroOf(col);
+      if (!h || h.down || !h.cell) r = { ok: false, reason: h && h.down ? 'Ton héros se soigne au nid.' : 'Ton héros est déjà en route.' };
+      else r = sendAnts(state, world, cfg, col.id, h.cell, String(order.to), emptyGroup(), true);
     } else if (order.type === 'lay') r = setLayMode(state, cfg, col.id, String(order.mode));
     else if (order.type === 'caste') r = setCaste(state, cfg, col.id, String(order.preset));
     else if (order.type === 'rally') r = rally(state, world, cfg, col.id, String(order.cell));
@@ -579,7 +640,7 @@
     return n;
   }
 
-  function launch(state, world, cfg, colonyId, path, g) {
+  function launch(state, world, cfg, colonyId, path, g, withHero) {
     const src = state.cells[path[0]];
     for (const k of CASTES) src[k] -= g[k] || 0;
     const legs = pathLegs(state, world, cfg, colonyId, path, g);
@@ -588,6 +649,11 @@
       w: g.w || 0, s: g.s || 0, e: g.e || 0,
       depart: state.tick, arrive: state.tick + legs[legs.length - 1], path, legs, dist: pathCells(world, path),
     };
+    if (withHero) {
+      move.h = 1;
+      const h = heroOf(state.colonies[colonyId]);
+      if (h) h.cell = null; // le héros est en route
+    }
     state.moves.push(move);
     return move;
   }
@@ -597,20 +663,22 @@
    * case atteignable par ses galeries (renfort lointain, attaque à la frontière).
    * @returns {{ok:boolean, reason?:string, move?:object}}
    */
-  function sendAnts(state, world, cfg, colonyId, from, to, g) {
+  function sendAnts(state, world, cfg, colonyId, from, to, g, withHero) {
     if (state.phase !== 'playing') return { ok: false, reason: 'La partie n’est pas en cours.' };
     const src = state.cells[from];
     if (!src || src.owner !== colonyId) return { ok: false, reason: 'Cette case ne t’appartient pas.' };
     const grp = {};
     for (const k of CASTES) grp[k] = Math.max(0, Math.min(src[k] || 0, Math.floor(Number(g[k]) || 0)));
-    if (total(grp) < 1) return { ok: false, reason: 'Pas assez de fourmiz.' };
+    const col = state.colonies[colonyId];
+    withHero = !!withHero && heroAt(col, from);
+    if (total(grp) < 1 && !withHero) return { ok: false, reason: 'Pas assez de fourmiz.' };
     const target = state.cells[to];
     if (target && target.owner >= 0 && target.owner !== colonyId && asleep(state, cfg, state.colonies[target.owner])) {
       return { ok: false, reason: '🛡️ Cette colonie dort sous son bouclier : impossible de l’attaquer.' };
     }
     const p = findPath(state, world, cfg, colonyId, from, to);
     if (!p.ok) return p;
-    return { ok: true, move: launch(state, world, cfg, colonyId, p.path, grp) };
+    return { ok: true, move: launch(state, world, cfg, colonyId, p.path, grp, withHero) };
   }
 
   /**
@@ -680,6 +748,7 @@
     if (col.queenAlive && col.nest === id) f *= cfg.combat.nestBonus;
     else if (col.queenAlive && col.nest && world.cells[col.nest] && nestDistance(world, col.nest, id) <= cfg.combat.nestAreaRadius + 0.5) f *= cfg.combat.nestAreaBonus;
     f *= 1 + evoLevel(col, 'shell') * cfg.evolutions.list.shell.effect;
+    f *= 1 + tpow(cfg, col, 'force');
     return f;
   }
 
@@ -701,7 +770,7 @@
     const encircle = Math.min(c.encircleMax, 1 + c.encircleBonus * Math.max(0, sides - 1));
     const scoutsOnly = g && total(g) > 0 && total(g) === (g.e || 0);
     const fatigue = scoutsOnly ? 1 : Math.max(c.fatigueMin, 1 - c.fatiguePerStep * Math.max(0, steps - c.fatigueFree));
-    const jaws = 1 + evoLevel(col, 'jaws') * cfg.evolutions.list.jaws.effect;
+    const jaws = (1 + evoLevel(col, 'jaws') * cfg.evolutions.list.jaws.effect) * (1 + tpow(cfg, col, 'force'));
     return { factor: jaws * encircle * fatigue, encircle, fatigue, sides };
   }
 
@@ -719,7 +788,23 @@
   function defensePower(state, world, cfg, id) {
     const c = getCell(state, world, cfg, id);
     const col = c.owner >= 0 ? state.colonies[c.owner] : null;
-    return power(c, cfg, col) * defenseFactor(state, world, cfg, id, c.owner);
+    return defenseRaw(cfg, c, col, id) * defenseFactor(state, world, cfg, id, c.owner);
+  }
+
+  /** Force brute de la défense d'une case : fourmiz + garde royale (nid) + héros, avant les bonus de terrain. */
+  function defenseRaw(cfg, c, col, id) {
+    let p = power(c, cfg, col);
+    if (col && col.queenAlive && col.nest === id) p += col.guard || 0;
+    if (col && heroAt(col, id)) p = (p + heroPower(cfg, col.hero)) * heroBoost(cfg, col.hero);
+    return p;
+  }
+
+  /** Force brute d'un groupe en attaque, héros compris (g.h = 1 si le héros l'accompagne). */
+  function attackRaw(cfg, g, col, vsWild) {
+    let p = power(g, cfg, col, vsWild);
+    const h = g && g.h ? heroOf(col) : null;
+    if (h) p = (p + heroPower(cfg, h)) * heroBoost(cfg, h);
+    return p;
   }
 
   /** Estimation (pour l'IA et l'interface) de la force brute nécessaire pour prendre une case. */
@@ -735,7 +820,7 @@
     const to = path[path.length - 1];
     const f = attackFactor(state, world, cfg, colonyId, to, pathCells(world, path), g);
     const wild = getCell(state, world, cfg, to).owner < 0;
-    const attack = power(g, cfg, state.colonies[colonyId], wild) * f.factor;
+    const attack = attackRaw(cfg, g, state.colonies[colonyId], wild) * f.factor;
     const defense = defensePower(state, world, cfg, to);
     return Object.assign({ attack, defense, win: attack > defense }, f);
   }
@@ -745,6 +830,7 @@
     const atk = state.colonies[move.owner];
     if (cell.owner === move.owner) {
       for (const k of CASTES) cell[k] += move[k] || 0;
+      if (move.h && heroOf(atk)) atk.hero.cell = move.to;
       return;
     }
     const defOwner = cell.owner;
@@ -753,13 +839,16 @@
       // Bouclier : l'attaque rebondit, les fourmiz rentrent à leur case de départ (si elle est encore à elles).
       const home = state.cells[move.from];
       if (home && home.owner === move.owner) for (const k of CASTES) home[k] += move[k] || 0;
+      if (move.h && heroOf(atk)) atk.hero.cell = home && home.owner === move.owner ? move.from : atk.nest;
       if (!atk.isAI) addLog(state, `🛡️ L'attaque de ${atk.name} rebondit sur le bouclier de ${def.name}.`, move.owner);
       return;
     }
     const steps = move.dist || (move.path || [0, 0]).length - 1;
-    const attack = power(move, cfg, atk, defOwner < 0) * attackFactor(state, world, cfg, move.owner, move.to, steps, move).factor;
-    const defense = power(cell, cfg, def) * defenseFactor(state, world, cfg, move.to, defOwner);
+    const attack = attackRaw(cfg, move, atk, defOwner < 0) * attackFactor(state, world, cfg, move.owner, move.to, steps, move).factor;
+    const defense = defenseRaw(cfg, cell, def, move.to) * defenseFactor(state, world, cfg, move.to, defOwner);
     const r = resolveCombat(attack, defense);
+    const defHero = def && heroAt(def, move.to);
+    const atNest = def && def.queenAlive && def.nest === move.to;
     const defName = defOwner < 0 ? 'les insectes sauvages' : def.name;
     if (r.attackerWins) {
       const surv = scaleGroup(move, r.ratio, true);
@@ -768,6 +857,9 @@
       atk.ctr = atk.ctr || {};
       if (def) { atk.ctr.enemy = (atk.ctr.enemy || 0) + 1; atk.score = (atk.score || 0) + cfg.score.perEnemyCapture; }
       else { atk.ctr.wild = (atk.ctr.wild || 0) + 1; atk.score = (atk.score || 0) + cfg.score.perWildCapture; }
+      if (move.h && heroOf(atk)) { atk.hero.cell = move.to; heroXp(state, cfg, atk, def ? 2 : 1); }
+      if (defHero) heroDown(state, cfg, def);
+      if (atNest) def.guard = 0;
       const t = treasureAt(world, move.to);
       if (t) addLog(state, `${atk.name} s'empare du trésor ${cfg.treasures.types[t].icon} ${cfg.treasures.types[t].name} !`, move.owner);
       if (def) {
@@ -782,6 +874,9 @@
     } else {
       const surv = scaleGroup(cell, r.ratio, false);
       cell.w = surv.w; cell.s = surv.s; cell.e = surv.e; cell.b = surv.b;
+      if (move.h) heroDown(state, cfg, atk);
+      if (defHero) heroXp(state, cfg, def, 1);
+      if (atNest) def.guard = (def.guard || 0) * r.ratio;
       if (!atk.isAI || (def && !def.isAI)) {
         addLog(state, `Attaque de ${atk.name} repoussée par ${defName}.`, def ? defOwner : move.owner);
       }
@@ -796,7 +891,7 @@
     const north = 45, south = -45, tropic = 0; // latitudes représentatives des trois zones de saison
     const per = [];
     for (const col of state.colonies) {
-      col.stats = { territories: 0, ants: 0, w: 0, s: 0, e: 0, b: 0, power: 0, income: 0, upkeep: 0, layCost: 0, layRate: 0, spoil: 0, net: 0, cap: 0, idle: 0, missing: 0, points: 0, biomes: {}, treasures: {} };
+      col.stats = { territories: 0, ants: 0, w: 0, s: 0, e: 0, b: 0, power: 0, income: 0, tfood: 0, upkeep: 0, layCost: 0, layRate: 0, spoil: 0, net: 0, cap: 0, idle: 0, missing: 0, points: 0, biomes: {}, treasures: {} };
       per[col.id] = {
         seasonN: seasonFactor(state, cfg, col, north), seasonS: seasonFactor(state, cfg, col, south), seasonT: seasonFactor(state, cfg, col, tropic),
         bonus: 1 + evoLevel(col, 'harvest') * cfg.evolutions.list.harvest.effect,
@@ -816,7 +911,7 @@
       if (tr) {
         const T = cfg.treasures.types[tr];
         s.treasures[tr] = (s.treasures[tr] || 0) + 1;
-        s.income += T.food;
+        s.tfood += T.food;
         s.points += T.points;
       }
       const opt = optimalWorkers(world, cfg, id);
@@ -836,9 +931,11 @@
       const s = col.stats;
       s.ants = s.w + s.s + s.e + s.b;
       s.power = power(s, cfg, col);
-      s.upkeep = s.w * K.w.upkeep + s.s * K.s.upkeep + s.e * K.e.upkeep + s.b * K.b.upkeep;
+      s.income = s.income * (1 + tpow(cfg, col, 'harvest')) + s.tfood;
+      s.upkeep = (s.w * K.w.upkeep + s.s * K.s.upkeep + s.e * K.e.upkeep + s.b * K.b.upkeep) * (1 + tpow(cfg, col, 'upkeep'));
       const granary = evoLevel(col, 'granary');
-      s.cap = (cfg.food.storageBase + cfg.food.storagePerTerritory * s.territories) * (1 + granary * cfg.evolutions.list.granary.effect);
+      s.cap = (cfg.food.storageBase + cfg.food.storagePerTerritory * s.territories) * (1 + granary * cfg.evolutions.list.granary.effect) * (1 + tpow(cfg, col, 'storage'));
+      s.guardMax = guardMax(cfg, col);
       s.layRate = layRate(state, world, cfg, col);
       s.layCost = s.layRate * eggCost(cfg, col) * cfg.queen.layModes[col.layMode].cost;
       s.spoil = winterSpoil(state, world, cfg, col);
@@ -908,6 +1005,7 @@
     let rate = Math.min(q.maxLayRate, q.baseLayRate + q.layRatePerTerritory * col.stats.territories);
     rate *= q.layModes[col.layMode].rate;
     rate *= 1 + evoLevel(col, 'fertility') * cfg.evolutions.list.fertility.effect;
+    rate *= 1 + tpow(cfg, col, 'lay');
     const season = seasonAt(state.tick, world.cells[col.nest].lat, cfg);
     if (!season.tropical && season.index === 3) rate *= q.winterLayFactor;
     return rate;
@@ -948,6 +1046,23 @@
       if (!col.alive || asleep(state, cfg, col)) continue; // colonie endormie : économie gelée
       const s = col.stats;
       col.food += s.income - s.upkeep - s.spoil;
+
+      // Garde royale : se régénère jusqu'à son maximum
+      const gm = s.guardMax || guardMax(cfg, col);
+      col.guard = Math.min(gm, (col.guard || 0) + gm * cfg.nest.regen);
+
+      // Héros : retour au nid après une défaite, ou si sa case a été perdue
+      const h = heroOf(col);
+      if (h) {
+        if (h.down && state.tick >= h.down && col.nest) {
+          h.down = 0; h.cell = col.nest;
+          addLog(state, `${cfg.hero.icon} Le héros de ${col.name} est de retour au nid.`, col.id);
+        } else if (!h.down && h.cell && (!state.cells[h.cell] || state.cells[h.cell].owner !== col.id)) {
+          h.cell = col.nest;
+        } else if (!h.down && !h.cell && !state.moves.some((m) => m.h && m.owner === col.id)) {
+          h.cell = col.nest; // sécurité : héros perdu en route
+        }
+      }
 
       // Le nid perdu (case prise) => plus de reine
       if (col.queenAlive && col.nest && (!state.cells[col.nest] || state.cells[col.nest].owner !== col.id)) {
@@ -1105,9 +1220,10 @@
         if (def.unlock) {
           col.unlocks = col.unlocks || {};
           col.unlocks[def.unlock] = true;
+          ensureHero(state, cfg, col);
           state.unlockEvents.push({ uid: col.uid, key: def.unlock });
           if (state.unlockEvents.length > 20) state.unlockEvents.splice(0, state.unlockEvents.length - 20);
-          text = `⭐ ${col.name} a débloqué les scarabées ! Sa reine pourra en pondre, dans cette colonie et les suivantes.`;
+          text = `⭐ ${col.name} a débloqué le héros scarabée ! Il l'accompagnera dans cette colonie et les suivantes.`;
         }
         addLog(state, text, col.id);
         col.missions[i] = newMission(state, world, cfg, col);
@@ -1150,7 +1266,7 @@
   const SIM = {
     CASTES, rand, hash01, total, power, scaleGroup, pickGroup, getCell, seasonAt, createWorldState, hydrate,
     joinColony, canFound, colonyOf, applyOrder, sendAnts, rally, findPath, pathLegs, pathCells, groupSpeed, tickMs, tickAt, onlineConfig, asleep,
-    autoBalanceWorkers, armyGroup, treasureAt, missionProgress, newMission, mixFor, emptyGroup,
+    autoBalanceWorkers, armyGroup, treasureAt, tpow, heroOf, heroAt, heroBoost, heroPower, guardMax, attackRaw, defenseRaw, missionProgress, newMission, mixFor, emptyGroup,
     setLayMode, setCaste, evolve, evoLevel, evoCost, resolveCombat, forceNeeded, defenseFactor,
     defensePower, attackFactor, attackPreview, optimalWorkers, harvestInfo, logistics, travelTicks, refreshStats,
     step, wildGarrison, eggCost,
