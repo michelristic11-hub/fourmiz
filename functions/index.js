@@ -28,11 +28,17 @@ const REGION = 'us-central1';
 setGlobalOptions({ region: REGION, memory: '1GiB', cpu: 1, maxInstances: 3 });
 admin.initializeApp();
 
-let world = null;
-/** La carte « jardin » est recalculée une fois par instance (quelques millisecondes). */
-function getWorld() {
-  if (!world) world = GARDEN.buildGarden(CONFIG.online.mapSeed, CONFIG);
-  return world;
+const worlds = {};
+/** La carte « jardin » d'une graine, recalculée une fois par instance (quelques millisecondes). */
+function getWorld(seed) {
+  if (seed == null) seed = CONFIG.online.mapSeed;
+  if (!worlds[seed]) worlds[seed] = GARDEN.buildGarden(seed, CONFIG);
+  return worlds[seed];
+}
+/** Carte à utiliser pour un état : la sienne, ou celle du réglage si le monde doit être recréé. */
+function worldOf(state) {
+  const ok = state && (state.worldVersion || 1) === CONFIG.online.worldVersion && state.mapSeed != null;
+  return getWorld(ok ? state.mapSeed : CONFIG.online.mapSeed);
 }
 
 /** Enregistre sur le compte des joueurs les combattants qu'ils viennent de débloquer. */
@@ -75,8 +81,7 @@ exports.tick = onSchedule({ schedule: 'every 1 minutes', timeoutSeconds: 120, ma
   const now = Date.now();
   const presence = (await admin.database().ref(`games/${gid}/presence`).once('value')).val() || {};
   if (ENGINE.isIdle(presence, CONFIG, now)) return; // personne : le monde attend (il rattrapera au plus quelques minutes)
-  const w = getWorld();
-  const s = await updateState(admin.database().ref(statePath(gid)), (cur) => ENGINE.runTick(cur, w, CONFIG, now, presence));
+  const s = await updateState(admin.database().ref(statePath(gid)), (cur) => ENGINE.runTick(cur, worldOf(cur), CONFIG, now, presence));
   await saveUnlocks(s);
   if (s) logger.info(`Ère ${s.era} · tick ${s.tick} · ${s.colonies ? Object.keys(s.colonies).length : 0} colonies`);
 });
@@ -88,7 +93,6 @@ exports.order = onValueCreated({ ref: '/games/{gameId}/orders/{orderId}' }, asyn
   await event.data.ref.remove();
   if (gameId !== CONFIG.online.gameId || !order || !order.uid) return;
 
-  const w = getWorld();
   // Les combattants débloqués viennent du compte du joueur, jamais du navigateur
   delete order.unlocks;
   if (order.type === 'join') order.unlocks = (await db.ref(`users/${order.uid}/unlocks`).once('value')).val() || {};
@@ -96,11 +100,20 @@ exports.order = onValueCreated({ ref: '/games/{gameId}/orders/{orderId}' }, asyn
   let result = { ok: false, reason: 'Ordre non traité.' };
   const after = await updateState(db.ref(statePath(gameId)), (cur) => {
     // Premier passage : le cache local est vide, Firebase rappelle avec la vraie valeur.
+    if (order.type === 'admin') {
+      if (cur === null && order.action !== 'reset' && order.action !== 'newmap') {
+        result = { ok: false, reason: 'Aucun monde en cours.' };
+        return null; // premier passage à vide : Firebase rappelle avec la vraie valeur
+      }
+      const out = ENGINE.runAdmin(cur, getWorld, CONFIG, order, now);
+      result = out.result;
+      return out.result.ok ? out.state : undefined;
+    }
     if (cur === null) {
       result = { ok: false, reason: 'Le monde est en cours de création, réessaie dans une minute.' };
       return null;
     }
-    const out = ENGINE.runOrder(cur, w, CONFIG, order, now);
+    const out = ENGINE.runOrder(cur, worldOf(cur), CONFIG, order, now);
     result = out.result;
     return out.result.ok ? out.state : undefined; // undefined = ordre refusé, rien n'est écrit
   });

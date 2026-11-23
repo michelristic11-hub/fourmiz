@@ -27,6 +27,11 @@ function advance(state, world, cfg, now) {
     if (state.tickMs) state.startedAt = now - state.tick * ms;
     state.tickMs = ms;
   }
+  if (state.phase === 'paused') {
+    // Monde en pause : le temps ne passe pas (l'horloge suit pour repartir sans saut).
+    state.startedAt = now - state.tick * ms;
+    return state;
+  }
   if (state.phase !== 'playing') {
     if (!state.overAt) state.overAt = now;
     return state;
@@ -94,6 +99,43 @@ function isIdle(presence, cfg, now) {
  * Applique l'ordre d'un joueur, après avoir rattrapé le temps écoulé.
  * @returns {{state:object|null, result:{ok:boolean, reason?:string}}}
  */
+/**
+ * Commandes de l'administrateur : pause, reprise, nouvelle partie (même carte ou nouvelle carte).
+ * @param {function} worldFor  graine → carte (mise en cache par l'appelant)
+ * @returns {{state:object|null, result:{ok:boolean, reason?:string}}}
+ */
+function runAdmin(state, worldFor, cfg, order, now) {
+  const admins = cfg.online.admins || [];
+  if (admins.indexOf(order.uid) < 0) return { state, result: { ok: false, reason: 'Réservé à l’administrateur du monde.' } };
+  const ms = SIM.tickMs(cfg);
+  const action = String(order.action || '');
+  if (action === 'reset' || action === 'newmap') {
+    const seed = action === 'newmap'
+      ? (Math.floor(Math.random() * 2147483646) + 1)
+      : (state && state.mapSeed != null ? state.mapSeed : cfg.online.mapSeed);
+    const s = freshWorld(worldFor(seed), cfg, now, state ? (state.era || 1) + 1 : 1);
+    s.log.push({ tick: 0, text: action === 'newmap' ? '🗺️ Nouvelle partie sur une nouvelle carte !' : '🔄 Nouvelle partie !', colony: -1 });
+    return { state: s, result: { ok: true } };
+  }
+  if (!state) return { state, result: { ok: false, reason: 'Aucun monde en cours.' } };
+  SIM.hydrate(state, cfg);
+  if (action === 'pause') {
+    if (state.phase === 'paused') return { state, result: { ok: false, reason: 'Le monde est déjà en pause.' } };
+    advance(state, worldFor(state.mapSeed), cfg, now);
+    state.phase = 'paused';
+    state.log.push({ tick: state.tick, text: '⏸ Le monde est mis en pause.', colony: -1 });
+    return { state, result: { ok: true } };
+  }
+  if (action === 'resume') {
+    if (state.phase !== 'paused') return { state, result: { ok: false, reason: 'Le monde n’est pas en pause.' } };
+    state.phase = 'playing';
+    state.startedAt = now - state.tick * ms;
+    state.log.push({ tick: state.tick, text: '▶ Le monde reprend.', colony: -1 });
+    return { state, result: { ok: true } };
+  }
+  return { state, result: { ok: false, reason: 'Commande inconnue.' } };
+}
+
 function runOrder(state, world, cfg, order, now) {
   if (!state) return { state, result: { ok: false, reason: 'Le monde est en cours de création, réessaie dans une minute.' } };
   advance(state, world, cfg, now == null ? Date.now() : now);
@@ -121,4 +163,4 @@ function clean(x) {
   return bad;
 }
 
-module.exports = { clean, runTick, runOrder, advance, applyPresence, isIdle };
+module.exports = { clean, runTick, runOrder, runAdmin, advance, applyPresence, isIdle };

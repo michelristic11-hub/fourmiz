@@ -524,6 +524,7 @@
    */
   function applyOrder(state, world, cfg, order) {
     if (!order || !order.uid) return { ok: false, reason: 'Ordre invalide.' };
+    if (state.phase === 'paused' && order.type !== 'ping') return { ok: false, reason: '⏸ Le monde est en pause.' };
     if (order.type === 'join') return joinColony(state, world, cfg, { uid: order.uid, name: order.name, unlocks: order.unlocks }, String(order.cell));
     const col = colonyOf(state, order.uid);
     if (!col) return { ok: false, reason: 'Tu n’as pas de colonie dans ce monde.' };

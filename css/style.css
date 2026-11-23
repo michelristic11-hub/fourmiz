@@ -292,3 +292,6 @@ label.check { display: flex; gap: 6px; align-items: center; font-size: 13px; mar
   #actionbar { left: 50%; width: min(440px, calc(100% - 160px)); }
   body.panel-open #actionbar { left: calc(50% + 166px); width: min(420px, calc(100% - 380px)); }
 }
+#admin { margin: 4px 0 12px; padding: 10px; border-radius: 10px; outline: 1px dashed var(--accent); }
+.admin-buttons { display: grid; gap: 6px; margin-top: 8px; }
+.admin-buttons button { min-height: 36px; }

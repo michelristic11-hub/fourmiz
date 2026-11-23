@@ -212,6 +212,11 @@
 
     online: {
       gameId: 'monde',
+      /**
+       * Administrateurs du monde en ligne (identifiants Firebase des comptes Google) : ils peuvent
+       * mettre le monde en pause, le relancer et recommencer une partie (onglet Monde).
+       */
+      admins: ['i0pIle9rOqedBef3gcT0WVeOjVv2'],
       /** Si le serveur a pris du retard, il rattrape au plus N ticks d'un coup (le reste du temps est sauté). */
       maxCatchUpTicks: 600,
       /** En ligne, le temps passe N fois moins vite qu'en solo (un tick = tickSeconds × N). */

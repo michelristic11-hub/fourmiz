@@ -223,6 +223,11 @@
       selected = best;
       dirty = true;
     },
+    admin(action) {
+      const labels = { pause: '⏸ Pause demandée…', resume: '▶ Reprise demandée…', reset: '🔄 Nouvelle partie demandée…', newmap: '🗺️ Nouvelle carte demandée…' };
+      if (action === 'reset' || action === 'newmap') { selected = inspected = null; hadColony = false; }
+      send({ type: 'admin', action }, labels[action]);
+    },
     goAll() { const ids = ownCells(); if (ids.length) gm.fitCells(ids); else gm.reset(); },
     zoomIn() { gm.zoomBy(1.5); },
     zoomOut() { gm.zoomBy(1 / 1.5); },
@@ -232,6 +237,7 @@
     const firstTime = !state && s;
     // Nouvelle carte publiée pendant que la page était ouverte : on recharge pour la dessiner.
     if (s && s.mapSeed != null && s.mapSeed !== world.seed && mode === 'online') {
+      try { localStorage.setItem('fz-online-seed', String(s.mapSeed)); } catch (e) { /* rien */ }
       if (!sessionStorage.getItem('fz-reload')) { sessionStorage.setItem('fz-reload', '1'); location.reload(); return; }
     } else if (s) sessionStorage.removeItem('fz-reload');
     state = s;
@@ -291,7 +297,9 @@
     }
     try {
       const t0 = performance.now();
-      const seed = mode === 'online' ? cfg.online.mapSeed : (FZ.BACKEND.savedSeed() || ((Math.random() * 2 ** 31) >>> 0) || 1);
+      let lastOnline = null;
+      try { lastOnline = Number(localStorage.getItem('fz-online-seed')) || null; } catch (e) { /* rien */ }
+      const seed = mode === 'online' ? (lastOnline || cfg.online.mapSeed) : (FZ.BACKEND.savedSeed() || ((Math.random() * 2 ** 31) >>> 0) || 1);
       world = FZ.GARDEN.buildGarden(seed, cfg);
       console.info(`Jardin : ${world.ids.length} cases en ${Math.round(performance.now() - t0)} ms`);
       gm = FZ.MAP.createMap(document.getElementById('map'), world, cfg, Object.assign({

@@ -70,6 +70,18 @@
     $('#ab-close').addEventListener('click', () => act.closeSelection());
     $('#with-hero').addEventListener('change', (e) => act.withHero(e.target.checked));
     $('#go-hero').addEventListener('click', () => act.goHero());
+    // Administration : les actions qui effacent la partie demandent un 2e clic de confirmation
+    let adminArmed = null, adminTime = 0;
+    document.querySelectorAll('#admin button[data-admin]').forEach((b) => b.addEventListener('click', () => {
+      const a = b.dataset.admin;
+      if ((a === 'reset' || a === 'newmap') && !(adminArmed === a && Date.now() - adminTime < 4000)) {
+        adminArmed = a; adminTime = Date.now();
+        say('⚠️ Toutes les colonies seront effacées. Clique encore pour confirmer.');
+        return;
+      }
+      adminArmed = null;
+      act.admin(a);
+    }));
     $('#overlay-btn').addEventListener('click', () => act.overlayButton());
     $('#btn-user').addEventListener('click', () => act.userButton());
     $('#btn-invite').addEventListener('click', () => act.invite());
@@ -351,11 +363,22 @@
 
       // Bandeau de fondation
       const placing = !me && state.phase === 'playing';
-      $('#placement').hidden = !placing;
-      if (placing) {
+      const paused = state.phase === 'paused';
+      $('#placement').hidden = !placing && !paused;
+      if (paused) $('#placement-text').textContent = '⏸ Le monde est en pause. Il reprendra quand l’administrateur le relancera.';
+      else if (placing) {
         $('#placement-text').textContent = view.joinPending
           ? '⏳ Fondation de ta colonie en cours…'
           : '👑 Touche une case libre du jardin pour fonder ta colonie.';
+      }
+
+      // Administration du monde en ligne
+      const isAdmin = online && view.uid && (cfg.online.admins || []).indexOf(view.uid) >= 0;
+      $('#admin').hidden = !isAdmin;
+      if (isAdmin) {
+        $('#admin-pause').hidden = paused;
+        $('#admin-resume').hidden = !paused;
+        $('#admin-state').textContent = `${paused ? '⏸ En pause' : '▶ En cours'} · partie n° ${state.era || 1} · ${state.colonies.filter((c) => c.alive && !c.isAI).length} joueur(s) · tick ${fmt(state.tick)}`;
       }
 
       // Fin d'une ère

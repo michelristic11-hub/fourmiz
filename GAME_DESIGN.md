@@ -41,6 +41,7 @@ users/{uid}/unlocks             combattants débloqués (écrit par le serveur, 
 
 - **`tick`** (chaque minute) : lit d'abord la présence. **Si personne n'est venu depuis 15 minutes, il s'arrête là** (presque gratuit). Sinon il rattrape le temps écoulé (au plus 600 ticks), applique la présence (bouclier), et enregistre les déblocages.
 - **`order`** : valide et applique l'ordre ; pour fonder une colonie, il lit les déblocages sur le compte du joueur (jamais ceux envoyés par le navigateur).
+- **Administration** (`online.admins`, onglet Monde, visible seulement par l'admin) : ordre `admin` avec `pause` (le temps s'arrête, ordres refusés), `resume` (reprise sans rattrapage), `reset` (nouvelle partie, même carte) et `newmap` (nouvelle partie sur une nouvelle carte ; la graine est gardée dans l'état et les navigateurs rechargent la carte). Le serveur vérifie le compte, jamais le navigateur.
 - **Robustesse** : l'état est nettoyé avant chaque écriture ; si la transaction échoue, le serveur relit et écrit directement.
 - **Coût** : l'état fait quelques dizaines de Ko (au lieu de 230 Ko sur l'ancienne carte du monde). Changer `online.worldVersion` recrée le monde en ligne.
 

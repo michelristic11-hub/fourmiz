@@ -175,7 +175,7 @@
         if (!api.uid) return { ok: false, reason: 'Connecte-toi d’abord.' };
         order.uid = api.uid;
         // Vérification et effet immédiats sur la prédiction ; le serveur confirme juste après.
-        if (predicted) {
+        if (predicted && order.type !== 'admin') {
           catchUp();
           const r = SIM.applyOrder(predicted, world, cfg, clone(order));
           if (!r.ok) return { ok: false, reason: r.reason };
@@ -192,7 +192,7 @@
       },
       serverNow() { return Date.now() + offset; },
       tickFloat() {
-        if (!predicted || !predicted.startedAt) return predicted ? predicted.tick : 0;
+        if (!predicted || !predicted.startedAt || predicted.phase !== 'playing') return predicted ? predicted.tick : 0;
         return (api.serverNow() - predicted.startedAt) / SIM.tickMs(cfg);
       },
     };

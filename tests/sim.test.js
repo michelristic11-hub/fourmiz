@@ -686,3 +686,45 @@ test('bouclier d’absence : nid plus dur à prendre (pas impossible), reste du 
   assert.strictEqual(B.alive, false, 'nid pris : la colonie absente disparaît');
   assert.strictEqual(cfgNoAI().shield.enabled, false, 'pas de bouclier en solo');
 });
+
+test('administration : pause, reprise sans saut de temps, nouvelle partie, nouvelle carte, réservé à l’admin', () => {
+  const cfg = SIM.onlineConfig(clone(CONFIG));
+  cfg.online.admins = ['boss'];
+  const worlds = {};
+  const worldFor = (seed) => worlds[seed] || (worlds[seed] = GARDEN.buildGarden(seed, cfg));
+  const w = worldFor(cfg.online.mapSeed);
+  const ms = SIM.tickMs(cfg);
+  let s = ENGINE.runTick(null, w, cfg, 1000);
+  const free = w.ids.find((id) => SIM.canFound(s, w, cfg, id).ok);
+  assert.ok(ENGINE.runOrder(s, w, cfg, { uid: 'u1', type: 'join', name: 'A', cell: free }, 1000).result.ok);
+  // Pas admin : refusé
+  assert.ok(!ENGINE.runAdmin(s, worldFor, cfg, { uid: 'u1', type: 'admin', action: 'pause' }, 2000).result.ok);
+  // Pause : le temps s'arrête
+  let r = ENGINE.runAdmin(s, worldFor, cfg, { uid: 'boss', type: 'admin', action: 'pause' }, 1000 + 10 * ms);
+  assert.ok(r.result.ok, r.result.reason);
+  const t = s.tick;
+  assert.strictEqual(s.phase, 'paused');
+  s = ENGINE.runTick(s, w, cfg, 1000 + 500 * ms);
+  assert.strictEqual(s.tick, t, 'rien ne bouge en pause');
+  assert.ok(!ENGINE.runOrder(s, w, cfg, { uid: 'u1', type: 'lay', mode: 'stop' }, 1000 + 501 * ms).result.ok, 'ordres refusés en pause');
+  // Reprise : pas de rattrapage du temps passé en pause
+  r = ENGINE.runAdmin(s, worldFor, cfg, { uid: 'boss', type: 'admin', action: 'resume' }, 1000 + 600 * ms);
+  assert.ok(r.result.ok);
+  s = ENGINE.runTick(s, w, cfg, 1000 + 610 * ms);
+  assert.strictEqual(s.tick, t + 10);
+  // Nouvelle partie (même carte)
+  r = ENGINE.runAdmin(s, worldFor, cfg, { uid: 'boss', type: 'admin', action: 'reset' }, 5000000);
+  assert.ok(r.result.ok);
+  assert.strictEqual(r.state.tick, 0);
+  assert.strictEqual(r.state.mapSeed, cfg.online.mapSeed);
+  assert.strictEqual(SIM.colonyOf(r.state, 'u1'), null, 'colonies effacées');
+  assert.strictEqual(r.state.era, (s.era || 1) + 1);
+  // Nouvelle carte : autre graine, et le serveur garde cette carte aux tours suivants
+  r = ENGINE.runAdmin(r.state, worldFor, cfg, { uid: 'boss', type: 'admin', action: 'newmap' }, 6000000);
+  assert.ok(r.result.ok);
+  assert.notStrictEqual(r.state.mapSeed, cfg.online.mapSeed);
+  const w2 = worldFor(r.state.mapSeed);
+  const s2 = ENGINE.runTick(JSON.parse(JSON.stringify(r.state)), w2, cfg, 6000000 + 100 * ms);
+  assert.strictEqual(s2.mapSeed, r.state.mapSeed);
+  assert.ok(s2.tick > 0, 'le monde avance sur la nouvelle carte (pas recréé)');
+});
