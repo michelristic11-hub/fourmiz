@@ -672,10 +672,6 @@
     const col = state.colonies[colonyId];
     withHero = !!withHero && heroAt(col, from);
     if (total(grp) < 1 && !withHero) return { ok: false, reason: 'Pas assez de fourmiz.' };
-    const target = state.cells[to];
-    if (target && target.owner >= 0 && target.owner !== colonyId && asleep(state, cfg, state.colonies[target.owner])) {
-      return { ok: false, reason: '🛡️ Cette colonie dort sous son bouclier : impossible de l’attaquer.' };
-    }
     const p = findPath(state, world, cfg, colonyId, from, to);
     if (!p.ok) return p;
     return { ok: true, move: launch(state, world, cfg, colonyId, p.path, grp, withHero) };
@@ -749,7 +745,17 @@
     else if (col.queenAlive && col.nest && world.cells[col.nest] && nestDistance(world, col.nest, id) <= cfg.combat.nestAreaRadius + 0.5) f *= cfg.combat.nestAreaBonus;
     f *= 1 + evoLevel(col, 'shell') * cfg.evolutions.list.shell.effect;
     f *= 1 + tpow(cfg, col, 'force');
+    if (shielded(state, world, cfg, col, id)) f *= cfg.shield.defense;
     return f;
+  }
+
+  /**
+   * Bouclier d'absence : seules les cases proches du nid (à shield.radius cases au plus) d'une colonie
+   * endormie se défendent beaucoup mieux. Le reste du territoire est attaquable normalement.
+   */
+  function shielded(state, world, cfg, col, id) {
+    if (!col || !col.nest || !world.cells[col.nest] || !asleep(state, cfg, col)) return false;
+    return nestDistance(world, col.nest, id) <= cfg.shield.radius + 0.5;
   }
 
   /** Nombre de cases de l'attaquant qui touchent la cible. */
@@ -835,14 +841,6 @@
     }
     const defOwner = cell.owner;
     const def = defOwner >= 0 ? state.colonies[defOwner] : null;
-    if (def && asleep(state, cfg, def)) {
-      // Bouclier : l'attaque rebondit, les fourmiz rentrent à leur case de départ (si elle est encore à elles).
-      const home = state.cells[move.from];
-      if (home && home.owner === move.owner) for (const k of CASTES) home[k] += move[k] || 0;
-      if (move.h && heroOf(atk)) atk.hero.cell = home && home.owner === move.owner ? move.from : atk.nest;
-      if (!atk.isAI) addLog(state, `🛡️ L'attaque de ${atk.name} rebondit sur le bouclier de ${def.name}.`, move.owner);
-      return;
-    }
     const steps = move.dist || (move.path || [0, 0]).length - 1;
     const attack = attackRaw(cfg, move, atk, defOwner < 0) * attackFactor(state, world, cfg, move.owner, move.to, steps, move).factor;
     const defense = defenseRaw(cfg, cell, def, move.to) * defenseFactor(state, world, cfg, move.to, defOwner);
@@ -1043,7 +1041,12 @@
 
     // 2. Économie de chaque colonie
     for (const col of state.colonies) {
-      if (!col.alive || asleep(state, cfg, col)) continue; // colonie endormie : économie gelée
+      if (!col.alive) continue;
+      if (asleep(state, cfg, col)) {
+        // Colonie endormie : économie gelée, mais la garde royale se reconstitue
+        col.guard = Math.min(col.stats.guardMax || guardMax(cfg, col), (col.guard || 0) + (col.stats.guardMax || guardMax(cfg, col)) * cfg.nest.regen);
+        continue;
+      }
       const s = col.stats;
       col.food += s.income - s.upkeep - s.spoil;
 
@@ -1265,7 +1268,7 @@
 
   const SIM = {
     CASTES, rand, hash01, total, power, scaleGroup, pickGroup, getCell, seasonAt, createWorldState, hydrate,
-    joinColony, canFound, colonyOf, applyOrder, sendAnts, rally, findPath, pathLegs, pathCells, groupSpeed, tickMs, tickAt, onlineConfig, asleep,
+    joinColony, canFound, colonyOf, applyOrder, sendAnts, rally, findPath, pathLegs, pathCells, groupSpeed, tickMs, tickAt, onlineConfig, asleep, shielded,
     autoBalanceWorkers, armyGroup, treasureAt, tpow, heroOf, heroAt, heroBoost, heroPower, guardMax, attackRaw, defenseRaw, missionProgress, newMission, mixFor, emptyGroup,
     setLayMode, setCaste, evolve, evoLevel, evoCost, resolveCombat, forceNeeded, defenseFactor,
     defensePower, attackFactor, attackPreview, optimalWorkers, harvestInfo, logistics, travelTicks, refreshStats,

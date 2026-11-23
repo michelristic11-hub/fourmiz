@@ -198,7 +198,9 @@
       }
       if (isNest) html += `<div class="treasure">🛡️ Garde royale : <b>${fmt(owner.guard)}</b> / ${fmt(owner.stats.guardMax || SIM.guardMax(cfg, owner))} (se régénère)</div>`;
       if (owner && SIM.heroAt(owner, id)) html += `<div class="treasure">${cfg.hero.icon} <b>Héros niveau ${owner.hero.lvl}</b> : force ×${fmt(SIM.heroBoost(cfg, owner.hero), 2)} et +${fmt(SIM.heroPower(cfg, owner.hero))}</div>`;
-      if (sleeping && !mine) html += `<div class="hint">🛡️ Son joueur est absent : cette colonie dort et ne peut pas être attaquée.</div>`;
+      if (sleeping && !mine) html += SIM.shielded(state, world, cfg, owner, id)
+        ? `<div class="hint">🛡️ Joueur absent : près de son nid, cette case se défend ×${fmt(cfg.shield.defense, 1)}.</div>`
+        : `<div class="hint">💤 Joueur absent : cette case, loin de son nid, n'est pas protégée.</div>`;
       html += `<div>${esc(b.name)} · ${owner ? castesLine(c, cfg) : `<b>${fmt(SIM.total(c))}</b> insectes`}</div>`;
       if (mine) {
         const h = SIM.harvestInfo(state, world, cfg, owner, id);

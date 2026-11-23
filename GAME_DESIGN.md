@@ -26,7 +26,7 @@ Un jeu web multijoueur persistant où chaque joueur dirige une colonie de fourmi
 - **Reine** : si le nid est pris (garde royale comprise), la reine meurt et la colonie disparaît ; ses cases redeviennent sauvages.
 - **Interface** : bandeau toujours visible (nourriture, fourmiz, score, mission la plus avancée) et panneau en onglets (Colonie, Missions, Évolutions, Monde, Aide).
 - **IA** : les colonies IA disparues sont remplacées (une toutes les 1 500 ticks). Elles visent aussi les trésors. Elles n'attaquent pas un joueur pendant ses 1 500 premiers ticks, puis seulement avec une force double.
-- **Bouclier d'absence** (en ligne) : sans signe de vie pendant 375 ticks (≈ 10 min), une colonie humaine s'endort : inattaquable, économie gelée. Le navigateur envoie un signal de présence toutes les 2 minutes tant que la page est ouverte.
+- **Bouclier d'absence** (en ligne) : sans signe de vie pendant 375 ticks (≈ 10 min), une colonie humaine s'endort : économie gelée (la garde royale se reconstitue quand même), et les cases à 2 cases ou moins du nid se défendent ×2,5. Le reste du territoire s'attaque normalement : tuer un absent est difficile, pas impossible. Le navigateur envoie un signal de présence toutes les 2 minutes tant que la page est ouverte.
 - **Récolte, combat, évolutions, saisons** : inchangés (voir `config.js`).
 
 ## Architecture multijoueur

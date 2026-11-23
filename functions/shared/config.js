@@ -204,10 +204,11 @@
     /** Partie en ligne (Firebase). */
     /**
      * Bouclier d'absence (en ligne seulement) : une colonie humaine dont le joueur n'a rien fait
-     * depuis afterTicks s'endort. Personne ne peut l'attaquer, et son économie est gelée
-     * (ni récolte, ni ponte, ni famine). Elle se réveille au retour du joueur.
+     * depuis afterTicks s'endort. Son économie est gelée (ni récolte, ni ponte, ni famine), et les cases
+     * à radius cases ou moins de son nid se défendent defense fois mieux : difficile, mais pas impossible,
+     * de tuer un joueur absent. Le reste de son territoire s'attaque normalement.
      */
-    shield: { enabled: false, afterTicks: 375 },
+    shield: { enabled: false, afterTicks: 375, radius: 2, defense: 2.5 },
 
     online: {
       gameId: 'monde',

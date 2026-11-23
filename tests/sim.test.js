@@ -650,16 +650,19 @@ test('en ligne : temps ralenti, changement de vitesse sans saut, nouveau monde, 
   assert.ok(st.moves.some((m) => m.owner === ai.id && m.to === 'c11_10'), 'après la protection, l’IA attaque');
 });
 
-test('bouclier d’absence : colonie endormie intouchable et gelée, réveil au premier ordre', () => {
+test('bouclier d’absence : nid plus dur à prendre (pas impossible), reste du territoire attaquable', () => {
   const w = fakeWorld(30, 20);
   const cfg = SIM.onlineConfig(cfgNoAI());
   const st = SIM.createWorldState(w, cfg, { aiCount: 0, seed: 5 });
   assert.ok(SIM.applyOrder(st, w, cfg, { uid: 'a', type: 'join', name: 'A', cell: 'c5_5' }).ok);
-  assert.ok(SIM.applyOrder(st, w, cfg, { uid: 'b', type: 'join', name: 'B', cell: 'c12_5' }).ok);
+  assert.ok(SIM.applyOrder(st, w, cfg, { uid: 'b', type: 'join', name: 'B', cell: 'c15_5' }).ok);
   const A = SIM.colonyOf(st, 'a'), B = SIM.colonyOf(st, 'b');
-  st.cells.c11_5 = { owner: B.id, w: 1, s: 0, e: 0 };
-  st.cells.c10_5 = { owner: A.id, w: 5, s: 100, e: 0 };
-  // A reste actif (ping régulier), B s'en va
+  st.cells.c14_5 = { owner: B.id, w: 2, s: 0, e: 0, b: 0 }; // près du nid de B
+  st.cells.c10_5 = { owner: B.id, w: 2, s: 0, e: 0, b: 0 }; // loin du nid de B
+  st.cells.c9_5 = { owner: A.id, w: 5, s: 100, e: 0, b: 0 };
+  st.cells.c13_5 = { owner: A.id, w: 5, s: 100, e: 0, b: 0 };
+  const F = (id) => SIM.defenseFactor(st, w, cfg, id, B.id);
+  const near0 = F('c14_5'), far0 = F('c10_5'), nest0 = F('c15_5');
   for (let i = 0; i < cfg.shield.afterTicks + 5; i++) {
     SIM.step(st, w, cfg);
     if (i % 100 === 0) SIM.applyOrder(st, w, cfg, { uid: 'a', type: 'ping' });
@@ -668,13 +671,18 @@ test('bouclier d’absence : colonie endormie intouchable et gelée, réveil au 
   const food = B.food;
   for (let i = 0; i < 50; i++) SIM.step(st, w, cfg);
   assert.strictEqual(B.food, food, 'économie gelée');
-  const r = SIM.applyOrder(st, w, cfg, { uid: 'a', type: 'send', from: 'c10_5', to: 'c11_5', w: 0, s: 50, e: 0 });
-  assert.ok(!r.ok && /bouclier/.test(r.reason));
-  // B revient : réveil, attaquable de nouveau
-  assert.ok(SIM.applyOrder(st, w, cfg, { uid: 'b', type: 'ping' }).ok);
-  assert.ok(!SIM.asleep(st, cfg, B));
-  assert.ok(SIM.applyOrder(st, w, cfg, { uid: 'a', type: 'send', from: 'c10_5', to: 'c11_5', w: 0, s: 50, e: 0 }).ok);
-  // Solo : pas de bouclier
-  assert.ok(!SIM.asleep(st, cfgNoAI(), B) || true);
-  assert.strictEqual(cfgNoAI().shield.enabled, false);
+  // Près du nid : défense ×2,5 ; loin du nid : normale
+  assert.ok(Math.abs(F('c14_5') - near0 * cfg.shield.defense) < 1e-9, 'près du nid : ×2,5');
+  assert.ok(Math.abs(F('c10_5') - far0) < 1e-9, 'loin du nid : pas de bonus');
+  assert.ok(Math.abs(F('c15_5') - nest0 * cfg.shield.defense) < 1e-9, 'nid renforcé');
+  // Une case loin du nid se prend sans difficulté
+  assert.ok(SIM.applyOrder(st, w, cfg, { uid: 'a', type: 'send', from: 'c9_5', to: 'c10_5', w: 0, s: 20, e: 0 }).ok);
+  for (let i = 0; i < 20; i++) SIM.step(st, w, cfg);
+  assert.strictEqual(st.cells.c10_5.owner, A.id);
+  // Le nid endormi peut quand même tomber face à une grosse armée
+  st.cells.c13_5.s = 2000;
+  assert.ok(SIM.applyOrder(st, w, cfg, { uid: 'a', type: 'send', from: 'c13_5', to: 'c15_5', w: 0, s: 2000, e: 0 }).ok);
+  for (let i = 0; i < 40; i++) SIM.step(st, w, cfg);
+  assert.strictEqual(B.alive, false, 'nid pris : la colonie absente disparaît');
+  assert.strictEqual(cfgNoAI().shield.enabled, false, 'pas de bouclier en solo');
 });
